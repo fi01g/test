@@ -1,15 +1,12 @@
 name: Linux RDP + Tailscale
-
 on:
   workflow_dispatch:
-
 jobs:
   rdp:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
-
       - name: Setup Tailscale
         env:
           TS_KEY: ${{ secrets.TS_AUTHKEY }}
@@ -20,21 +17,35 @@ jobs:
           rm -f /tmp/tskey
           echo "IP: $(tailscale ip -4)"
           tailscale status
-
-      - name: Install XRDP + XFCE
+      - name: Install XRDP
         run: |
           sudo apt-get update
           sudo apt-get install -y xfce4 xfce4-goodies xfce4-session dbus-x11 xrdp xorgxrdp
           sudo sed -i 's/allowed_users=console/allowed_users=anybody/' /etc/X11/Xwrapper.config
-          
-          # امسح اي كونفج قديم
-          sudo rm -f /etc/xrdp/startwm.sh
-          sudo bash -c 'cat > /etc/xrdp/startwm.sh <<EOF
-          #!/bin/sh
-          unset DBUS_SESSION_BUS_ADDRESS
-          unset XDG_RUNTIME_DIR
-          . /etc/X11/Xsession
-          EOF'
+          printf '#!/bin/sh\nunset DBUS_SESSION_BUS_ADDRESS\nunset XDG_RUNTIME_DIR\nstartxfce4\n' | sudo tee /etc/xrdp/startwm.sh
+          sudo chmod +x /etc/xrdp/startwm.sh
+          cat /etc/xrdp/startwm.sh
+          sudo useradd -m -s /bin/bash rdpuser || true
+          echo "rdpuser:123456" | sudo chpasswd
+          sudo usermod -aG sudo,ssl-cert rdpuser || true
+          echo "startxfce4" | sudo tee /home/rdpuser/.xsession
+          echo "startxfce4" > ~/.xsession
+          sudo chown rdpuser:rdpuser /home/rdpuser/.xsession
+          sudo chmod 644 /home/rdpuser/.xsession
+          sudo rm -rf /tmp/.X* /var/run/xrdp/* || true
+          sudo service xrdp restart
+          sleep 5
+          ps aux | grep xrdp || true
+      - name: Keep Alive
+        run: |
+          echo "=========================="
+          echo "IP: $(tailscale ip -4)"
+          echo "User: rdpuser Pass: 123456"
+          echo "=========================="
+          while true; do
+            echo "[$(date)] Running IP $(tailscale ip -4)"
+            sleep 60
+          done          EOF'
           # الطريقة الصح لـ xfce على noble
           sudo bash -c 'cat >> /etc/xrdp/startwm.sh <<EOF2
           startxfce4
