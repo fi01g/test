@@ -1,0 +1,53 @@
+name: Linux RDP + Tailscale
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          hostname: gh-rdp-linux
+
+      - name: Install Desktop & XRDP
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xfce4 xfce4-goodies xrdp
+          sudo sed -i 's/allowed_users=console/allowed_users=anybody/' /etc/X11/Xwrapper.config
+          echo "xfce4-session" > ~/.xsession
+          # عمل يوزر وباسورد للـ RDP
+          sudo useradd -m rdpuser || true
+          echo "rdpuser:123456" | sudo chpasswd
+          sudo adduser xrdp ssl-cert
+          sudo systemctl restart xrdp || sudo service xrdp restart
+          sudo systemctl enable xrdp || true
+          echo "XRDP Status:"
+          sudo service xrdp status || true
+
+      - name: Show Tailscale IP
+        run: |
+          tailscale status
+          echo "=========================="
+          echo "IP بتاع الجهاز للـ RDP:"
+          tailscale ip -4
+          echo "=========================="
+          echo "Username: rdpuser"
+          echo "Password: 123456"
+          echo "=========================="
+
+      - name: Keep Alive 6 Hours
+        run: |
+          echo "السيرفر شغال.. متقفش الصفحة دي"
+          echo "ادخل من Remote Desktop على Windows ب IP اللي فوق"
+          while true; do
+            echo "[$(date)] Server Running... Tailscale IP: $(tailscale ip -4)"
+            sleep 60
+          done
