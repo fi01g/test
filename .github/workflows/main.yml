@@ -1,89 +1,44 @@
 name: Linux RDP + Tailscale
-
 on:
   workflow_dispatch:
-
 jobs:
   rdp:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Tailscale Manual
+      - uses: actions/checkout@v4
+      - name: Setup Tailscale
+        env:
+          TS_KEY: ${{ secrets.TS_AUTHKEY }}
         run: |
+          echo "Checking key format..."
+          echo "Prefix: ${TS_KEY:0:12}"
+          if [ -z "$TS_KEY" ]; then echo "❌ Secret فاضي"; exit 1; fi
+          if [[ "$TS_KEY" != tskey-auth-* ]]; then echo "❌ ده مش Auth Key - لازم يبدأ بـ tskey-auth-"; exit 1; fi
           curl -fsSL https://tailscale.com/install.sh | sh
-          sudo tailscale up --authkey=${{ secrets.TS_AUTHKEY }} --hostname=gh-rdp-$(date +%s)
-          echo "Waiting for Tailscale..."
-          sleep 5
-          tailscale status
-          echo "=========================="
-          echo "IP للـ RDP:"
+          sudo tailscale up --authkey="$TS_KEY" --hostname=gh-rdp-$(date +%s)
           tailscale ip -4
-          echo "=========================="
-
-      - name: Install Desktop & XRDP
+      - name: Install XRDP
         run: |
           sudo apt-get update
           sudo apt-get install -y xfce4 xfce4-goodies dbus-x11 xrdp xorgxrdp
           sudo sed -i 's/allowed_users=console/allowed_users=anybody/' /etc/X11/Xwrapper.config
-          
           sudo bash -c 'cat > /etc/xrdp/startwm.sh <<EOF
           #!/bin/sh
-          if [ -r /etc/default/locale ]; then
-            . /etc/default/locale
-            export LANG LANGUAGE
-          fi
+          if [ -r /etc/default/locale ]; then . /etc/default/locale; export LANG LANGUAGE; fi
           unset DBUS_SESSION_BUS_ADDRESS
           unset XDG_RUNTIME_DIR
           startxfce4
           EOF'
           sudo chmod +x /etc/xrdp/startwm.sh
-
           sudo useradd -m rdpuser || true
           echo "rdpuser:123456" | sudo chpasswd
-          sudo usermod -aG sudo rdpuser
           sudo adduser xrdp ssl-cert
-
-          echo "startxfce4" | sudo tee /home/rdpuser/.xsession
+          echo "startxfce4" | sudo tee /home/rdpuser/.xsession > /dev/null
           echo "startxfce4" > ~/.xsession
           sudo chown rdpuser:rdpuser /home/rdpuser/.xsession
-          sudo chmod +x /home/rdpuser/.xsession
-
-          sudo rm -rf /tmp/.X* /tmp/.xrdp*
           sudo service xrdp restart
-          sleep 3
-          sudo service xrdp status || true
-
-      - name: Show Info
-        run: |
-          echo "=========================="
-          echo "Username: rdpuser"
-          echo "Password: 123456"
-          echo "IP:" $(tailscale ip -4)
-          echo "=========================="
-
       - name: Keep Alive
         run: |
-          echo "السيرفر شغال.."
-          while true; do
-            echo "[$(date)] IP: $(tailscale ip -4)"
-            sleep 60
-          done          done          tailscale status
-          echo "=========================="
-          echo "IP بتاع الجهاز للـ RDP:"
-          tailscale ip -4
-          echo "=========================="
-          echo "Username: rdpuser"
-          echo "Password: 123456"
-          echo "=========================="
-
-      - name: Keep Alive 6 Hours
-        run: |
-          echo "السيرفر شغال.. متقفش الصفحة دي"
-          echo "ادخل من Remote Desktop على Windows ب IP اللي فوق"
-          while true; do
-            echo "[$(date)] Server Running... Tailscale IP: $(tailscale ip -4)"
-            sleep 60
-          done
+          echo "User: rdpuser Pass: 123456 IP: $(tailscale ip -4)"
+          while true; do sleep 60; done
