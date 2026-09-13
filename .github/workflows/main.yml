@@ -1,40 +1,4 @@
-name: Linux RDP + Tailscale
-
-on:
-  workflow_dispatch:
-
-jobs:
-  rdp:
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Tailscale
-        uses: tailscale/github-action@v3
-        with:
-          authkey: ${{ secrets.TS_AUTHKEY }}
-          hostname: gh-rdp-linux
-
-      - name: Install Desktop & XRDP
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xfce4 xfce4-goodies dbus-x11 xrdp xorgxrdp
-          sudo sed -i 's/allowed_users=console/allowed_users=anybody/' /etc/X11/Xwrapper.config
-          
-          # تظبيط ملف تشغيل xrdp
-          sudo bash -c 'cat > /etc/xrdp/startwm.sh <<EOF
-          #!/bin/sh
-          if [ -r /etc/default/locale ]; then
-            . /etc/default/locale
-            export LANG LANGUAGE
-          fi
-          unset DBUS_SESSION_BUS_ADDRESS
-          unset XDG_RUNTIME_DIR
-          startxfce4
-          EOF'
-          sudo chmod +x /etc/xrdp/startwm.sh
+https://github.com/fi01g/test/tree/main          sudo chmod +x /etc/xrdp/startwm.sh
 
           # عمل اليوزر
           sudo useradd -m rdpuser || true
