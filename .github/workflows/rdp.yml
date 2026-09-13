@@ -1,8 +1,8 @@
-name: Linux RDP + Tailscale
+name: VNC + Tailscale
 on:
   workflow_dispatch:
 jobs:
-  rdp:
+  vnc:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
@@ -13,24 +13,33 @@ jobs:
         run: |
           echo -n "$TS_KEY" | tr -d ' \r\n' > /tmp/tskey
           curl -fsSL https://tailscale.com/install.sh | sh
-          sudo tailscale up --authkey=file:/tmp/tskey --hostname=gh-rdp-$(date +%s)
+          sudo tailscale up --authkey=file:/tmp/tskey --hostname=gh-vnc-$(date +%s)
           rm -f /tmp/tskey
           echo "IP: $(tailscale ip -4)"
-      - name: Install XRDP
+
+      - name: Install Desktop + VNC
         run: |
           sudo apt-get update
-          sudo apt-get install -y xfce4 xfce4-session dbus-x11 xrdp xorgxrdp
-          sudo sed -i 's/allowed_users=console/allowed_users=anybody/' /etc/X11/Xwrapper.config
-          printf '#!/bin/sh\nunset DBUS_SESSION_BUS_ADDRESS\nunset XDG_RUNTIME_DIR\nstartxfce4\n' | sudo tee /etc/xrdp/startwm.sh
-          sudo chmod +x /etc/xrdp/startwm.sh
-          sudo useradd -m rdpuser || true
-          echo "rdpuser:123456" | sudo chpasswd
-          echo "startxfce4" | sudo tee /home/rdpuser/.xsession
-          echo "startxfce4" > ~/.xsession
-          sudo chown rdpuser:rdpuser /home/rdpuser/.xsession
-          sudo service xrdp restart
-          sleep 5
+          sudo apt-get install -y xfce4 xfce4-goodies xfce4-session dbus-x11 tigervnc-standalone-server tigervnc-common novnc websockify
+          sudo useradd -m -s /bin/bash vncuser || true
+          echo "vncuser:123456" | sudo chpasswd
+          sudo usermod -aG sudo vncuser || true
+          sudo -u vncuser mkdir -p /home/vncuser/.vnc
+          echo "123456" | sudo -u vncuser vncpasswd -f > /home/vncuser/.vnc/passwd
+          sudo chmod 600 /home/vncuser/.vnc/passwd
+          printf '#!/bin/sh\nunset SESSION_MANAGER\nunset DBUS_SESSION_BUS_ADDRESS\nunset XDG_RUNTIME_DIR\nexec startxfce4\n' | sudo -u vncuser tee /home/vncuser/.vnc/xstartup
+          sudo chmod +x /home/vncuser/.vnc/xstartup
+          sudo -u vncuser vncserver :1 -geometry 1280x800 -depth 24 -localhost no
+          sudo -u vncuser websockify -D --web=/usr/share/novnc 6080 localhost:5901
+          sleep 3
+          ps aux | grep vnc || true
+          echo "VNC Started"
+
       - name: Keep Alive
         run: |
-          echo "IP: $(tailscale ip -4) User: rdpuser Pass: 123456"
-          while true; do sleep 60; echo "[$(date)] Running"; done
+          echo "=========================="
+          echo "VNC Viewer: $(tailscale ip -4):5901"
+          echo "Browser noVNC: http://$(tailscale ip -4):6080/vnc.html"
+          echo "User: vncuser Pass: 123456 VNC Pass: 123456"
+          echo "=========================="
+          while true; do sleep 60; echo "[$(date)] Running $(tailscale ip -4)"; done
