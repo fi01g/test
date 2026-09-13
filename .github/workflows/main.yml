@@ -23,17 +23,14 @@ jobs:
           curl -fsSL https://tailscale.com/install.sh | sh
           sudo tailscale up --authkey=file:/tmp/tskey --hostname=gh-rdp-$(date +%s)
           rm -f /tmp/tskey
-          echo "=========================="
+          tailscale ip -4
           tailscale status
-          echo "IP للـ RDP: $(tailscale ip -4)"
-          echo "=========================="
 
       - name: Install XRDP
         run: |
           sudo apt-get update
           sudo apt-get install -y --reinstall xfce4 xfce4-session xfce4-goodies dbus-x11 xrdp xorgxrdp
           sudo sed -i 's/allowed_users=console/allowed_users=anybody/' /etc/X11/Xwrapper.config
-          
           sudo bash -c 'cat > /etc/xrdp/startwm.sh <<EOF
           #!/bin/sh
           if [ -r /etc/default/locale ]; then
@@ -45,22 +42,17 @@ jobs:
           exec startxfce4
           EOF'
           sudo chmod +x /etc/xrdp/startwm.sh
-
           sudo useradd -m rdpuser || true
           echo "rdpuser:123456" | sudo chpasswd
           sudo usermod -aG sudo rdpuser
           sudo adduser xrdp ssl-cert || true
-
           echo "exec startxfce4" | sudo tee /home/rdpuser/.xsession > /dev/null
           echo "exec startxfce4" > ~/.xsession
           sudo chown rdpuser:rdpuser /home/rdpuser/.xsession
           sudo chmod +x /home/rdpuser/.xsession
-          sudo cp /home/rdpuser/.xsession /etc/skel/.xsession || true
-
-          sudo rm -rf /tmp/.X* /tmp/.xrdp* /var/run/xrdp/* || true
+          sudo rm -rf /tmp/.X* /tmp/.xrdp* || true
           sudo service xrdp restart
           sleep 4
-          sudo service xrdp status || true
 
       - name: Show Info
         run: |
@@ -76,11 +68,4 @@ jobs:
           while true; do
             echo "[$(date)] IP: $(tailscale ip -4) - Running"
             sleep 60
-          done          echo "startxfce4" | sudo tee /home/rdpuser/.xsession > /dev/null
-          echo "startxfce4" > ~/.xsession
-          sudo chown rdpuser:rdpuser /home/rdpuser/.xsession
-          sudo service xrdp restart
-      - name: Keep Alive
-        run: |
-          echo "User: rdpuser Pass: 123456 IP: $(tailscale ip -4)"
-          while true; do sleep 60; done
+          done
