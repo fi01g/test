@@ -8,33 +8,68 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Tailscale
         env:
           TS_KEY: ${{ secrets.TS_AUTHKEY }}
         run: |
-          echo "Checking key..."
-          echo "Prefix: ${TS_KEY:0:12} Len: ${#TS_KEY}"
-          if [ -z "$TS_KEY" ]; then echo "❌ Secret TS_AUTHKEY فاضي"; exit 1; fi
-          if [[ "$TS_KEY" != tskey-auth-* ]]; then echo "❌ المفتاح لازم يبدأ بـ tskey-auth-"; exit 1; fi
           echo -n "$TS_KEY" | tr -d ' \r\n' > /tmp/tskey
           curl -fsSL https://tailscale.com/install.sh | sh
           sudo tailscale up --authkey=file:/tmp/tskey --hostname=gh-rdp-$(date +%s)
           rm -f /tmp/tskey
-          tailscale ip -4
+          echo "IP: $(tailscale ip -4)"
           tailscale status
 
-      - name: Install XRDP
+      - name: Install XRDP + XFCE
         run: |
           sudo apt-get update
-          sudo apt-get install -y --reinstall xfce4 xfce4-session xfce4-goodies dbus-x11 xrdp xorgxrdp
+          sudo apt-get install -y xfce4 xfce4-goodies xfce4-session dbus-x11 xrdp xorgxrdp
           sudo sed -i 's/allowed_users=console/allowed_users=anybody/' /etc/X11/Xwrapper.config
+          
+          # امسح اي كونفج قديم
+          sudo rm -f /etc/xrdp/startwm.sh
           sudo bash -c 'cat > /etc/xrdp/startwm.sh <<EOF
           #!/bin/sh
-          if [ -r /etc/default/locale ]; then
-            . /etc/default/locale
+          unset DBUS_SESSION_BUS_ADDRESS
+          unset XDG_RUNTIME_DIR
+          . /etc/X11/Xsession
+          EOF'
+          # الطريقة الصح لـ xfce على noble
+          sudo bash -c 'cat >> /etc/xrdp/startwm.sh <<EOF2
+          startxfce4
+          EOF2'
+          sudo chmod +x /etc/xrdp/startwm.sh
+          cat /etc/xrdp/startwm.sh
+
+          sudo useradd -m -s /bin/bash rdpuser || true
+          echo "rdpuser:123456" | sudo chpasswd
+          sudo usermod -aG sudo,ssl-cert rdpuser
+          
+          # لازم تعملها لليوزرين
+          echo "startxfce4" > ~/.xsession
+          echo "startxfce4" | sudo tee /home/rdpuser/.xsession
+          sudo chown rdpuser:rdpuser /home/rdpuser/.xsession
+          sudo chmod 644 /home/rdpuser/.xsession
+          
+          # حل مشكلة failsafe
+          sudo mkdir -p /home/rdpuser/.config/xfce4
+          sudo chown -R rdpuser:rdpuser /home/rdpuser/.config
+
+          sudo rm -rf /tmp/.X* /var/run/xrdp/*
+          sudo service xrdp restart
+          sleep 5
+          ps aux | grep xrdp
+          sudo cat /var/log/xrdp-sesman.log | tail -n 30 || true
+
+      - name: Keep Alive
+        run: |
+          echo "=========================="
+          echo "IP: $(tailscale ip -4)"
+          echo "User: rdpuser Pass: 123456"
+          echo "جرب تتصل دلوقتي وسيب الصفحة مفتوحة"
+          echo "=========================="
+          while true; do sleep 60; echo "[$(date)] still running IP $(tailscale ip -4)"; done            . /etc/default/locale
             export LANG LANGUAGE
           fi
           unset DBUS_SESSION_BUS_ADDRESS
