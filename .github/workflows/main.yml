@@ -20,21 +20,57 @@ jobs:
       - name: Install Desktop & XRDP
         run: |
           sudo apt-get update
-          sudo apt-get install -y xfce4 xfce4-goodies xrdp
+          sudo apt-get install -y xfce4 xfce4-goodies dbus-x11 xrdp xorgxrdp
           sudo sed -i 's/allowed_users=console/allowed_users=anybody/' /etc/X11/Xwrapper.config
-          echo "xfce4-session" > ~/.xsession
-          # عمل يوزر وباسورد للـ RDP
+          
+          # تظبيط ملف تشغيل xrdp
+          sudo bash -c 'cat > /etc/xrdp/startwm.sh <<EOF
+          #!/bin/sh
+          if [ -r /etc/default/locale ]; then
+            . /etc/default/locale
+            export LANG LANGUAGE
+          fi
+          unset DBUS_SESSION_BUS_ADDRESS
+          unset XDG_RUNTIME_DIR
+          startxfce4
+          EOF'
+          sudo chmod +x /etc/xrdp/startwm.sh
+
+          # عمل اليوزر
           sudo useradd -m rdpuser || true
           echo "rdpuser:123456" | sudo chpasswd
+          sudo usermod -aG sudo rdpuser
           sudo adduser xrdp ssl-cert
-          sudo systemctl restart xrdp || sudo service xrdp restart
-          sudo systemctl enable xrdp || true
-          echo "XRDP Status:"
+
+          # حل مشكلة failsafe - لازم .xsession يكون لليوزر rdpuser
+          echo "startxfce4" | sudo tee /home/rdpuser/.xsession
+          echo "startxfce4" > ~/.xsession
+          sudo chown rdpuser:rdpuser /home/rdpuser/.xsession
+          sudo chmod +x /home/rdpuser/.xsession
+
+          sudo rm -rf /tmp/.X* /tmp/.xrdp*
+          sudo service xrdp restart
+          sleep 3
           sudo service xrdp status || true
 
       - name: Show Tailscale IP
         run: |
+          echo "=========================="
           tailscale status
+          echo "=========================="
+          echo "IP للـ RDP:"
+          tailscale ip -4
+          echo "Username: rdpuser"
+          echo "Password: 123456"
+          echo "=========================="
+
+      - name: Keep Alive 6 Hours
+        run: |
+          echo "السيرفر شغال.. متقفش الصفحة دي"
+          while true; do
+            echo "[$(date)] Running... IP: $(tailscale ip -4)"
+            sleep 60
+          done          tailscale status
           echo "=========================="
           echo "IP بتاع الجهاز للـ RDP:"
           tailscale ip -4
