@@ -11,12 +11,14 @@ jobs:
     steps:
 
       # ==========================================
-      # macOS INFORMATION
+      # MACOS INFORMATION
       # ==========================================
 
       - name: macOS Information
         shell: bash
         run: |
+          set -e
+
           echo "=========================================="
           echo "          macOS INFORMATION"
           echo "=========================================="
@@ -53,19 +55,15 @@ jobs:
           brew install --cask rustdesk
 
           echo ""
-          echo "RustDesk installation completed."
+          echo "Checking RustDesk installation..."
 
-          echo ""
-          echo "Checking application..."
-
-          if [ -d "/Applications/RustDesk.app" ]; then
-            echo "RustDesk.app found."
-          else
+          if [ ! -d "/Applications/RustDesk.app" ]; then
             echo "ERROR: RustDesk.app was not found."
             exit 1
           fi
 
-          echo ""
+          echo "RustDesk installed successfully."
+
           echo "=========================================="
 
       # ==========================================
@@ -74,66 +72,83 @@ jobs:
 
       - name: Start RustDesk
         shell: bash
+        env:
+          RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
         run: |
           set -e
+
+          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
 
           echo "=========================================="
           echo "          STARTING RUSTDESK"
           echo "=========================================="
-
-          open -a "/Applications/RustDesk.app"
-
-          echo "Waiting for RustDesk to start..."
-
-          sleep 15
-
-          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
 
           if [ ! -f "$RUSTDESK" ]; then
             echo "ERROR: RustDesk executable not found."
             exit 1
           fi
 
-          echo ""
-          echo "RustDesk executable:"
-          echo "$RUSTDESK"
+          # Start RustDesk first
+          open -a "/Applications/RustDesk.app"
+
+          echo "Waiting for RustDesk..."
+          sleep 15
+
+          # ======================================
+          # SET PERMANENT PASSWORD
+          # ======================================
 
           echo ""
-          echo "RustDesk version:"
+          echo "Setting RustDesk permanent password..."
 
-          "$RUSTDESK" --version || true
+          if [ -z "$RUSTDESK_PASSWORD" ]; then
+            echo "ERROR: RUSTDESK_PASSWORD secret is empty."
+            exit 1
+          fi
+
+          "$RUSTDESK" --password "$RUSTDESK_PASSWORD"
+
+          echo "Permanent password configured."
+
+          # ======================================
+          # GET RUSTDESK ID
+          # ======================================
 
           echo ""
-          echo "=========================================="
-          echo "             RUSTDESK ID"
-          echo "=========================================="
+          echo "Getting RustDesk ID..."
 
           ID=$("$RUSTDESK" --get-id 2>/dev/null || true)
 
-          if [ -z "$ID" ]; then
-            echo "WARNING: RustDesk ID could not be retrieved."
-          else
-            echo ""
+          echo ""
+          echo "=========================================="
+          echo "          RUSTDESK CONNECTION"
+          echo "=========================================="
+
+          if [ -n "$ID" ]; then
             echo "RustDesk ID: $ID"
-            echo ""
+          else
+            echo "WARNING: Could not retrieve RustDesk ID."
           fi
 
+          echo "Permanent password: configured"
           echo "=========================================="
 
       # ==========================================
-      # SHOW AVAILABLE CLI COMMANDS
+      # VERIFY RUSTDESK PROCESS
       # ==========================================
 
-      - name: RustDesk CLI Information
+      - name: Verify RustDesk
         shell: bash
         run: |
-          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
-
           echo "=========================================="
-          echo "        RUSTDESK CLI INFORMATION"
+          echo "          RUSTDESK PROCESS"
           echo "=========================================="
 
-          "$RUSTDESK" --help 2>&1 || true
+          pgrep -fl RustDesk || true
+
+          echo ""
+          echo "RustDesk application:"
+          ls -ld /Applications/RustDesk.app
 
           echo ""
           echo "=========================================="
@@ -147,56 +162,18 @@ jobs:
         run: |
           echo ""
           echo "=========================================="
-          echo "       macOS RUNNER IS NOW RUNNING"
+          echo "       macOS RUNNER IS NOW ONLINE"
           echo "=========================================="
           echo ""
-          echo "The GitHub Actions job will remain active."
+          echo "RustDesk is running."
+          echo "Permanent password has been configured."
           echo ""
-          echo "Use the RustDesk ID shown above."
+          echo "The GitHub Actions job will remain active."
           echo ""
           echo "=========================================="
 
           while true
           do
             echo "[$(date)] macOS Runner is alive..."
-            sleep 300
-          done        env:
-          RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
-        run: |
-          set -e
-
-          open -a "/Applications/RustDesk.app"
-
-          sleep 15
-
-          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
-
-          echo "RustDesk executable:"
-          echo "$RUSTDESK"
-
-          echo ""
-          echo "RustDesk version:"
-          "$RUSTDESK" --version || true
-
-          echo ""
-          echo "RustDesk ID:"
-
-          ID=$("$RUSTDESK" --get-id 2>/dev/null || true)
-
-          echo "$ID"
-
-          echo ""
-          echo "Checking available RustDesk commands..."
-
-          "$RUSTDESK" --help 2>&1 | head -100 || true
-
-      - name: Keep Runner Alive
-        shell: bash
-        run: |
-          echo "macOS Runner is online."
-
-          while true
-          do
-            echo "Runner alive: $(date)"
             sleep 300
           done
