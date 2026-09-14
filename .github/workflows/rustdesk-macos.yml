@@ -1,4 +1,4 @@
-name: macOS - RustDesk + NoMachine
+name: macOS - RustDesk Only
 
 on:
   workflow_dispatch:
@@ -10,9 +10,9 @@ jobs:
 
     steps:
 
-      # ============================================================
+      # ==========================================
       # 1. SYSTEM INFORMATION
-      # ============================================================
+      # ==========================================
       - name: System Information
         shell: bash
         run: |
@@ -35,6 +35,465 @@ jobs:
           whoami
 
           echo ""
+          echo "Console user:"
+          stat -f "%Su" /dev/console
+
+          echo ""
+          echo "Logged users:"
+          who || true
+
+
+      # ==========================================
+      # 2. CREATE ABDULRAHMAN
+      # ==========================================
+      - name: Create Abdulrahman
+        shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " CREATING MACOS USER"
+          echo "=========================================="
+
+          if [ -z "$MACOS_USERNAME" ]; then
+            echo "ERROR: MACOS_USERNAME is empty."
+            exit 1
+          fi
+
+          if [ -z "$MACOS_PASSWORD" ]; then
+            echo "ERROR: MACOS_PASSWORD is empty."
+            exit 1
+          fi
+
+          if [[ ! "$MACOS_USERNAME" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+            echo "ERROR: Invalid username."
+            exit 1
+          fi
+
+          echo ""
+          echo "Username:"
+          echo "$MACOS_USERNAME"
+
+          if id "$MACOS_USERNAME" >/dev/null 2>&1; then
+            echo "User already exists."
+          else
+            echo "Creating user..."
+
+            sudo sysadminctl \
+              -addUser "$MACOS_USERNAME" \
+              -fullName "$MACOS_USERNAME" \
+              -password "$MACOS_PASSWORD"
+
+            echo "User created."
+          fi
+
+          echo ""
+          echo "Adding Administrator privileges..."
+
+          sudo dseditgroup \
+            -o edit \
+            -a "$MACOS_USERNAME" \
+            -t user \
+            admin
+
+          echo ""
+          echo "User information:"
+
+          id "$MACOS_USERNAME"
+
+          echo ""
+          echo "Groups:"
+
+          id -Gn "$MACOS_USERNAME"
+
+
+      # ==========================================
+      # 3. VERIFY USER
+      # ==========================================
+      - name: Verify Abdulrahman
+        shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " VERIFYING USER"
+          echo "=========================================="
+
+          echo ""
+          echo "Username:"
+
+          sudo -u "$MACOS_USERNAME" whoami
+
+          echo ""
+          echo "UID:"
+
+          id -u "$MACOS_USERNAME"
+
+          echo ""
+          echo "Groups:"
+
+          id -Gn "$MACOS_USERNAME"
+
+          echo ""
+          echo "Home directory:"
+
+          dscl . -read \
+            "/Users/$MACOS_USERNAME" \
+            NFSHomeDirectory
+
+          echo ""
+          echo "Administrator membership:"
+
+          dseditgroup \
+            -o checkmember \
+            -m "$MACOS_USERNAME" \
+            admin \
+            || true
+
+
+      # ==========================================
+      # 4. INSTALL RUSTDESK
+      # ==========================================
+      - name: Install RustDesk
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " INSTALLING RUSTDESK"
+          echo "=========================================="
+
+          brew update
+
+          brew install --cask rustdesk
+
+          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
+
+          if [ ! -f "$RUSTDESK" ]; then
+            echo ""
+            echo "ERROR: RustDesk executable not found."
+
+            exit 1
+          fi
+
+          echo ""
+          echo "RustDesk executable found."
+
+          echo ""
+          echo "RustDesk version:"
+
+          "$RUSTDESK" \
+            --version \
+            || true
+
+
+      # ==========================================
+      # 5. CONFIGURE RUSTDESK
+      # ==========================================
+      - name: Configure RustDesk
+        shell: bash
+        env:
+          RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " CONFIGURING RUSTDESK"
+          echo "=========================================="
+
+          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
+
+          if [ -z "$RUSTDESK_PASSWORD" ]; then
+            echo "ERROR: RUSTDESK_PASSWORD is empty."
+
+            exit 1
+          fi
+
+          echo ""
+          echo "Starting RustDesk..."
+
+          "$RUSTDESK" \
+            --server \
+            >/tmp/rustdesk-server.log \
+            2>&1 &
+
+          sleep 10
+
+          echo ""
+          echo "Getting RustDesk ID..."
+
+          ID=$(
+            "$RUSTDESK" \
+              --get-id \
+              2>/dev/null \
+              || true
+          )
+
+          echo ""
+          echo "RustDesk ID:"
+          echo "$ID"
+
+          echo ""
+          echo "Setting permanent password..."
+
+          PASSWORD_OUTPUT=$(
+            sudo "$RUSTDESK" \
+              --password "$RUSTDESK_PASSWORD" \
+              2>&1 \
+              || true
+          )
+
+          echo "$PASSWORD_OUTPUT"
+
+          sleep 5
+
+          echo ""
+          echo "Restarting RustDesk..."
+
+          pkill -f \
+            "/Applications/RustDesk.app/Contents/MacOS/RustDesk" \
+            || true
+
+          sleep 5
+
+          nohup "$RUSTDESK" \
+            >/tmp/rustdesk.log \
+            2>&1 &
+
+          sleep 10
+
+          FINAL_ID=$(
+            "$RUSTDESK" \
+              --get-id \
+              2>/dev/null \
+              || true
+          )
+
+          echo ""
+          echo "=========================================="
+          echo " RUSTDESK READY"
+          echo "=========================================="
+
+          echo ""
+          echo "RustDesk ID:"
+          echo "$FINAL_ID"
+
+          echo ""
+          echo "RustDesk processes:"
+
+          pgrep -fl RustDesk \
+            || true
+
+
+      # ==========================================
+      # 6. START RUSTDESK AS ABDULRAHMAN
+      # ==========================================
+      - name: Start RustDesk As Abdulrahman
+        shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " STARTING RUSTDESK AS ABDULRAHMAN"
+          echo "=========================================="
+
+          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
+
+          echo ""
+          echo "Current console user:"
+
+          stat -f "%Su" /dev/console
+
+          echo ""
+          echo "Starting RustDesk as:"
+
+          echo "$MACOS_USERNAME"
+
+          sudo -u "$MACOS_USERNAME" \
+            -H \
+            env \
+            HOME="/Users/$MACOS_USERNAME" \
+            USER="$MACOS_USERNAME" \
+            LOGNAME="$MACOS_USERNAME" \
+            nohup "$RUSTDESK" \
+            >/tmp/rustdesk-abdulrahman.log \
+            2>&1 &
+
+          sleep 10
+
+          echo ""
+          echo "RustDesk processes:"
+
+          pgrep -fl RustDesk \
+            || true
+
+          echo ""
+          echo "RustDesk user log:"
+
+          tail -50 \
+            /tmp/rustdesk-abdulrahman.log \
+            2>/dev/null \
+            || true
+
+
+      # ==========================================
+      # 7. FINAL INFORMATION
+      # ==========================================
+      - name: Final Information
+        shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+        run: |
+          echo "=========================================="
+          echo " FINAL INFORMATION"
+          echo "=========================================="
+
+          echo ""
+          echo "=========================================="
+          echo " MACOS"
+          echo "=========================================="
+
+          sw_vers
+
+          echo ""
+          echo "Architecture:"
+
+          uname -m
+
+          echo ""
+          echo "Console user:"
+
+          stat -f "%Su" /dev/console
+
+          echo ""
+          echo "Logged users:"
+
+          who || true
+
+          echo ""
+          echo "=========================================="
+          echo " ABDULRAHMAN"
+          echo "=========================================="
+
+          id "$MACOS_USERNAME"
+
+          echo ""
+          echo "Groups:"
+
+          id -Gn "$MACOS_USERNAME"
+
+          echo ""
+          echo "=========================================="
+          echo " RUSTDESK"
+          echo "=========================================="
+
+          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
+
+          echo ""
+          echo "RustDesk ID:"
+
+          "$RUSTDESK" \
+            --get-id \
+            2>/dev/null \
+            || true
+
+          echo ""
+          echo "RustDesk processes:"
+
+          pgrep -fl RustDesk \
+            || true
+
+          echo ""
+          echo "RustDesk log:"
+
+          tail -50 \
+            /tmp/rustdesk.log \
+            2>/dev/null \
+            || true
+
+          echo ""
+          echo "=========================================="
+          echo " NETWORK"
+          echo "=========================================="
+
+          echo ""
+          echo "Hostname:"
+
+          hostname
+
+          echo ""
+          echo "IPv4 addresses:"
+
+          ifconfig \
+            | grep "inet " \
+            | grep -v "127.0.0.1" \
+            || true
+
+
+      # ==========================================
+      # 8. KEEP RUNNER ALIVE
+      # ==========================================
+      - name: Keep Runner Alive
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo " MACOS RUNNER ONLINE"
+          echo "=========================================="
+
+          echo ""
+          echo "RustDesk is running."
+
+          echo ""
+          echo "The GitHub Actions job must remain running"
+          echo "for remote access to remain available."
+
+          while true
+          do
+
+            echo ""
+            echo "=========================================="
+            echo "[$(date)] RUNNER ALIVE"
+            echo "=========================================="
+
+            echo ""
+            echo "Console user:"
+
+            stat -f "%Su" /dev/console \
+              2>/dev/null \
+              || true
+
+            echo ""
+            echo "RustDesk:"
+
+            pgrep -fl RustDesk \
+              || true
+
+            echo ""
+            echo "RustDesk ID:"
+
+            /Applications/RustDesk.app/Contents/MacOS/RustDesk \
+              --get-id \
+              2>/dev/null \
+              || true
+
+            echo ""
+            echo "IPv4:"
+
+            ifconfig \
+              | grep "inet " \
+              | grep -v "127.0.0.1" \
+              || true
+
+            sleep 300
+
+          done          echo ""
           echo "Console user:"
           stat -f "%Su" /dev/console
 
