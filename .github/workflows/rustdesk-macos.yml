@@ -15,56 +15,20 @@ jobs:
           sw_vers
           echo "Architecture: $(uname -m)"
 
-      - name: Install RustDesk
+            - name: Install RustDesk
         shell: bash
         run: |
           set -e
 
-          ARCH=$(uname -m)
+          echo "Installing RustDesk with Homebrew..."
 
-          if [ "$ARCH" = "arm64" ]; then
-            ARCH_NAME="aarch64"
-          else
-            ARCH_NAME="x86_64"
-          fi
+          brew update
 
-          curl -fsSL \
-            https://api.github.com/repos/rustdesk/rustdesk/releases/latest \
-            -o /tmp/release.json
+          brew install --cask rustdesk
 
-          URL=$(python3 -c "
-          import json
+          echo "RustDesk installation completed."
 
-          data = json.load(open('/tmp/release.json'))
-
-          for asset in data['assets']:
-              name = asset['name'].lower()
-
-              if '$ARCH_NAME' in name and name.endswith('.dmg'):
-                  print(asset['browser_download_url'])
-                  break
-          ")
-
-          if [ -z "$URL" ]; then
-            echo "RustDesk DMG not found."
-            exit 1
-          fi
-
-          curl -fL "$URL" -o /tmp/rustdesk.dmg
-
-          hdiutil attach /tmp/rustdesk.dmg -nobrowse -readonly
-
-          APP=$(find /Volumes -name "RustDesk.app" -type d -print -quit)
-
-          if [ -z "$APP" ]; then
-            echo "RustDesk.app not found."
-            exit 1
-          fi
-
-          sudo rm -rf /Applications/RustDesk.app
-          sudo cp -R "$APP" /Applications/RustDesk.app
-
-          hdiutil detach "$(dirname "$APP")" || true
+          ls -la /Applications/RustDesk.app
 
           echo "RustDesk installed."
 
