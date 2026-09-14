@@ -1,4 +1,4 @@
-name: macOS RustDesk - Abdulrahman GUI Test
+name: macOS RustDesk - User & Runner Password
 
 on:
   workflow_dispatch:
@@ -107,7 +107,7 @@ jobs:
           id "$MACOS_USERNAME"
 
           echo ""
-          echo "Admin groups:"
+          echo "Groups:"
           id -Gn "$MACOS_USERNAME"
 
 
@@ -151,7 +151,7 @@ jobs:
 
 
       # =========================================================
-      # 4. Verify Abdulrahman Account
+      # 4. Verify Abdulrahman
       # =========================================================
       - name: Verify Abdulrahman Account
         shell: bash
@@ -185,7 +185,7 @@ jobs:
             NFSHomeDirectory
 
           echo ""
-          echo "Testing HOME environment:"
+          echo "Environment:"
 
           sudo -u "$MACOS_USERNAME" -H sh -c '
             echo "whoami=$(whoami)"
@@ -200,7 +200,7 @@ jobs:
 
 
       # =========================================================
-      # 5. TEST GUI SESSION AS ABDULRAHMAN
+      # 5. Test GUI Session As Abdulrahman
       # =========================================================
       - name: Test Abdulrahman GUI Session
         shell: bash
@@ -223,14 +223,8 @@ jobs:
           who || true
 
           echo ""
-          echo "User ID:"
-          id "$MACOS_USERNAME"
-
-          USER_UID=$(id -u "$MACOS_USERNAME")
-
-          echo ""
           echo "Abdulrahman UID:"
-          echo "$USER_UID"
+          id -u "$MACOS_USERNAME"
 
           echo ""
           echo "Home directory:"
@@ -239,9 +233,7 @@ jobs:
             NFSHomeDirectory
 
           echo ""
-          echo "=========================================="
-          echo " Testing Environment"
-          echo "=========================================="
+          echo "Testing environment as Abdulrahman:"
 
           sudo -u "$MACOS_USERNAME" -H sh -c '
             echo "whoami=$(whoami)"
@@ -252,13 +244,7 @@ jobs:
           '
 
           echo ""
-          echo "=========================================="
-          echo " Testing GUI-capable Process"
-          echo "=========================================="
-
-          echo ""
-          echo "Attempting to open System Settings as:"
-          echo "$MACOS_USERNAME"
+          echo "Attempting to open System Settings as Abdulrahman..."
 
           sudo -u "$MACOS_USERNAME" -H \
             env \
@@ -269,21 +255,16 @@ jobs:
             2>&1 || true
 
           echo ""
-          echo "Waiting for System Settings..."
+          echo "Waiting..."
           sleep 5
 
           echo ""
-          echo "=========================================="
-          echo " Processes belonging to Abdulrahman"
-          echo "=========================================="
+          echo "Processes belonging to Abdulrahman:"
 
           ps aux | grep "$MACOS_USERNAME" | grep -v grep || true
 
           echo ""
-          echo "=========================================="
-          echo " Final Console User"
-          echo "=========================================="
-
+          echo "Final console user:"
           stat -f "%Su" /dev/console
 
           echo ""
@@ -321,6 +302,7 @@ jobs:
 
           echo ""
           echo "RustDesk version:"
+
           "$RUSTDESK" --version || true
 
 
@@ -365,7 +347,7 @@ jobs:
           sleep 10
 
           echo ""
-          echo "Setting permanent RustDesk password..."
+          echo "Setting permanent password..."
 
           PASSWORD_OUTPUT=$(
             sudo "$RUSTDESK" \
@@ -384,8 +366,6 @@ jobs:
             echo ""
             echo "WARNING: RustDesk did not report success."
 
-            echo ""
-            echo "RustDesk server log:"
             cat /tmp/rustdesk-server.log || true
           fi
 
@@ -412,8 +392,6 @@ jobs:
             echo ""
             echo "RustDesk failed to start."
 
-            echo ""
-            echo "RustDesk log:"
             cat /tmp/rustdesk.log || true
 
             exit 1
@@ -433,12 +411,12 @@ jobs:
           echo "$FINAL_ID"
 
           echo ""
-          echo "Permanent password:"
+          echo "Password:"
           echo "CONFIGURED"
 
 
       # =========================================================
-      # 8. محاولة تشغيل RustDesk نفسه تحت Abdulrahman
+      # 8. Test RustDesk As Abdulrahman
       # =========================================================
       - name: Test RustDesk As Abdulrahman
         shell: bash
@@ -463,7 +441,7 @@ jobs:
           pgrep -fl RustDesk || true
 
           echo ""
-          echo "Starting a RustDesk process as:"
+          echo "Starting RustDesk as:"
           echo "$MACOS_USERNAME"
 
           sudo -u "$MACOS_USERNAME" -H \
@@ -481,12 +459,15 @@ jobs:
           pgrep -fl RustDesk || true
 
           echo ""
-          echo "Processes owned by Abdulrahman:"
+          echo "RustDesk processes owned by Abdulrahman:"
+
           ps aux | grep "$MACOS_USERNAME" | grep RustDesk || true
 
           echo ""
           echo "RustDesk Abdulrahman log:"
-          tail -50 /tmp/rustdesk-abdulrahman.log \
+
+          tail -50 \
+            /tmp/rustdesk-abdulrahman.log \
             2>/dev/null || true
 
           echo ""
@@ -495,7 +476,64 @@ jobs:
 
 
       # =========================================================
-      # 9. Final Status
+      # 9. CHANGE RUNNER PASSWORD
+      # =========================================================
+      - name: Change Runner Password
+        shell: bash
+        env:
+          RUNNER_PASSWORD: ${{ secrets.RUNNER_PASSWORD }}
+
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " Changing Runner Password"
+          echo "=========================================="
+
+          if [ -z "$RUNNER_PASSWORD" ]; then
+            echo "ERROR: RUNNER_PASSWORD secret is empty."
+            exit 1
+          fi
+
+          echo ""
+          echo "Current console user:"
+          stat -f "%Su" /dev/console
+
+          echo ""
+          echo "Checking runner account..."
+
+          if ! id runner >/dev/null 2>&1; then
+            echo "ERROR: runner account does not exist."
+            exit 1
+          fi
+
+          echo ""
+          echo "Runner UID:"
+          id -u runner
+
+          echo ""
+          echo "Changing password for runner..."
+
+          sudo dscl . \
+            -passwd \
+            "/Users/runner" \
+            "$RUNNER_PASSWORD"
+
+          echo ""
+          echo "Password change command completed."
+
+          echo ""
+          echo "Runner account:"
+          id runner
+
+          echo ""
+          echo "NOTE:"
+          echo "The new password is stored only in the"
+          echo "RUNNER_PASSWORD GitHub Secret."
+
+
+      # =========================================================
+      # 10. Final Status
       # =========================================================
       - name: Final Status
         shell: bash
@@ -524,6 +562,10 @@ jobs:
           id "$MACOS_USERNAME"
 
           echo ""
+          echo "Runner:"
+          id runner
+
+          echo ""
           echo "RustDesk processes:"
           pgrep -fl RustDesk || true
 
@@ -534,7 +576,7 @@ jobs:
 
 
       # =========================================================
-      # 10. Keep Runner Alive
+      # 11. Keep Runner Alive
       # =========================================================
       - name: Keep Runner Alive
         shell: bash
