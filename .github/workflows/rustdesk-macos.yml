@@ -10,31 +10,157 @@ jobs:
 
     steps:
 
-      - name: macOS Info
-        run: |
-          sw_vers
-          echo "Architecture: $(uname -m)"
+      # ==========================================
+      # macOS INFORMATION
+      # ==========================================
 
-            - name: Install RustDesk
+      - name: macOS Information
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo "          macOS INFORMATION"
+          echo "=========================================="
+
+          sw_vers
+
+          echo ""
+          echo "Architecture:"
+          uname -m
+
+          echo ""
+          echo "=========================================="
+
+      # ==========================================
+      # INSTALL RUSTDESK
+      # ==========================================
+
+      - name: Install RustDesk
         shell: bash
         run: |
           set -e
 
-          echo "Installing RustDesk with Homebrew..."
+          echo "=========================================="
+          echo "          INSTALLING RUSTDESK"
+          echo "=========================================="
+
+          echo "Updating Homebrew..."
 
           brew update
 
+          echo ""
+          echo "Installing RustDesk..."
+
           brew install --cask rustdesk
 
+          echo ""
           echo "RustDesk installation completed."
 
-          ls -la /Applications/RustDesk.app
+          echo ""
+          echo "Checking application..."
 
-          echo "RustDesk installed."
+          if [ -d "/Applications/RustDesk.app" ]; then
+            echo "RustDesk.app found."
+          else
+            echo "ERROR: RustDesk.app was not found."
+            exit 1
+          fi
+
+          echo ""
+          echo "=========================================="
+
+      # ==========================================
+      # START RUSTDESK
+      # ==========================================
 
       - name: Start RustDesk
         shell: bash
-        env:
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "          STARTING RUSTDESK"
+          echo "=========================================="
+
+          open -a "/Applications/RustDesk.app"
+
+          echo "Waiting for RustDesk to start..."
+
+          sleep 15
+
+          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
+
+          if [ ! -f "$RUSTDESK" ]; then
+            echo "ERROR: RustDesk executable not found."
+            exit 1
+          fi
+
+          echo ""
+          echo "RustDesk executable:"
+          echo "$RUSTDESK"
+
+          echo ""
+          echo "RustDesk version:"
+
+          "$RUSTDESK" --version || true
+
+          echo ""
+          echo "=========================================="
+          echo "             RUSTDESK ID"
+          echo "=========================================="
+
+          ID=$("$RUSTDESK" --get-id 2>/dev/null || true)
+
+          if [ -z "$ID" ]; then
+            echo "WARNING: RustDesk ID could not be retrieved."
+          else
+            echo ""
+            echo "RustDesk ID: $ID"
+            echo ""
+          fi
+
+          echo "=========================================="
+
+      # ==========================================
+      # SHOW AVAILABLE CLI COMMANDS
+      # ==========================================
+
+      - name: RustDesk CLI Information
+        shell: bash
+        run: |
+          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
+
+          echo "=========================================="
+          echo "        RUSTDESK CLI INFORMATION"
+          echo "=========================================="
+
+          "$RUSTDESK" --help 2>&1 || true
+
+          echo ""
+          echo "=========================================="
+
+      # ==========================================
+      # KEEP RUNNER ALIVE
+      # ==========================================
+
+      - name: Keep Runner Alive
+        shell: bash
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "       macOS RUNNER IS NOW RUNNING"
+          echo "=========================================="
+          echo ""
+          echo "The GitHub Actions job will remain active."
+          echo ""
+          echo "Use the RustDesk ID shown above."
+          echo ""
+          echo "=========================================="
+
+          while true
+          do
+            echo "[$(date)] macOS Runner is alive..."
+            sleep 300
+          done        env:
           RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
         run: |
           set -e
