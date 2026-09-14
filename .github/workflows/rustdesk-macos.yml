@@ -10,103 +10,63 @@ jobs:
 
     steps:
 
-      # =========================================================
+      # ============================================================
       # 1. SYSTEM INFORMATION
-      # =========================================================
+      # ============================================================
       - name: System Information
-        shell: bash
         run: |
-          set -e
+          echo "=========================================="
+          echo " SYSTEM INFORMATION"
+          echo "=========================================="
 
-          CYAN='\033[0;36m'
-          RESET='\033[0m'
-
-          echo -e "${CYAN}==========================================${RESET}"
-          echo -e "${CYAN} SYSTEM INFORMATION${RESET}"
-          echo -e "${CYAN}==========================================${RESET}"
-
-          echo ""
-          echo "macOS:"
           sw_vers
-
           echo ""
-          echo "Architecture:"
-          uname -m
-
+          uname -a
           echo ""
-          echo "Actions user:"
+          echo "Current user:"
           whoami
-
           echo ""
           echo "Console user:"
-          stat -f "%Su" /dev/console
-
+          scutil <<< "show State:/Users/ConsoleUser" | grep -E "Name :|UID :"
           echo ""
-          echo "Logged users:"
-          who || true
 
-
-      # =========================================================
-      # 2. CREATE ABDULRAHMAN
-      # =========================================================
-      - name: Create Abdulrahman
-        shell: bash
+      # ============================================================
+      # 2. CREATE ABDULRAHMAN USER
+      # ============================================================
+      - name: Create Abdulrahman User
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
           MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
-
         run: |
           set -e
 
-          GREEN='\033[0;32m'
-          RED='\033[0;31m'
-          CYAN='\033[0;36m'
-          RESET='\033[0m'
+          echo "=========================================="
+          echo " CREATING / VERIFYING USER"
+          echo "=========================================="
 
-          echo -e "${CYAN}==========================================${RESET}"
-          echo -e "${CYAN} CREATING ABDULRAHMAN${RESET}"
-          echo -e "${CYAN}==========================================${RESET}"
-
-          if [ -z "$MACOS_USERNAME" ]; then
-            echo -e "${RED}ERROR: MACOS_USERNAME is empty.${RESET}"
-            exit 1
-          fi
-
-          if [ -z "$MACOS_PASSWORD" ]; then
-            echo -e "${RED}ERROR: MACOS_PASSWORD is empty.${RESET}"
+          if [ -z "$MACOS_USERNAME" ] || [ -z "$MACOS_PASSWORD" ]; then
+            echo "ERROR: MACOS_USERNAME or MACOS_PASSWORD is empty."
             exit 1
           fi
 
           if [[ ! "$MACOS_USERNAME" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-            echo -e "${RED}ERROR: Invalid username.${RESET}"
+            echo "ERROR: Invalid username."
             exit 1
           fi
 
-          echo ""
-          echo "Username:"
-          echo "$MACOS_USERNAME"
-
           if id "$MACOS_USERNAME" >/dev/null 2>&1; then
-
-            echo ""
-            echo -e "${GREEN}User already exists.${RESET}"
+            echo "User already exists."
 
           else
-
-            echo ""
-            echo "Creating user..."
+            echo "Creating user: $MACOS_USERNAME"
 
             sudo sysadminctl \
               -addUser "$MACOS_USERNAME" \
-              -fullName "$MACOS_USERNAME" \
+              -fullName "Abdulrahman" \
               -password "$MACOS_PASSWORD"
 
-            echo -e "${GREEN}User created.${RESET}"
-
+            echo "User created."
           fi
-
-          echo ""
-          echo "Adding Administrator privileges..."
 
           sudo dseditgroup \
             -o edit \
@@ -114,84 +74,38 @@ jobs:
             -t user \
             admin
 
-          echo ""
-          echo "User ID:"
-          id "$MACOS_USERNAME"
+          echo "User is an administrator."
 
-          echo ""
-          echo "Groups:"
-          id -Gn "$MACOS_USERNAME"
-
-
-      # =========================================================
-      # 3. VERIFY ABDULRAHMAN
-      # =========================================================
+      # ============================================================
+      # 3. VERIFY USER
+      # ============================================================
       - name: Verify Abdulrahman
-        shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-
         run: |
           set -e
 
-          GREEN='\033[0;32m'
-          RED='\033[0;31m'
-          CYAN='\033[0;36m'
-          RESET='\033[0m'
+          echo "=========================================="
+          echo " VERIFYING USER"
+          echo "=========================================="
 
-          echo -e "${CYAN}==========================================${RESET}"
-          echo -e "${CYAN} VERIFYING ABDULRAHMAN${RESET}"
-          echo -e "${CYAN}==========================================${RESET}"
+          id "$MACOS_USERNAME"
 
           echo ""
-          echo "whoami:"
-          sudo -u "$MACOS_USERNAME" whoami
+          echo "Admin membership:"
+          dseditgroup -o checkmember -m "$MACOS_USERNAME" admin
 
           echo ""
-          echo "UID:"
-          id -u "$MACOS_USERNAME"
+          echo "Home directory:"
+          dscl . -read "/Users/$MACOS_USERNAME" NFSHomeDirectory
 
-          echo ""
-          echo "Groups:"
-          id -Gn "$MACOS_USERNAME"
-
-          echo ""
-          echo "Home:"
-          dscl . -read \
-            "/Users/$MACOS_USERNAME" \
-            NFSHomeDirectory
-
-          echo ""
-          echo "Checking Administrator membership..."
-
-          ADMIN_CHECK=$(
-            dseditgroup \
-              -o checkmember \
-              -m "$MACOS_USERNAME" \
-              admin
-          )
-
-          echo "$ADMIN_CHECK"
-
-          if echo "$ADMIN_CHECK" | grep -qi "yes"; then
-            echo ""
-            echo -e "${GREEN}SUCCESS: Abdulrahman is an Administrator.${RESET}"
-          else
-            echo ""
-            echo -e "${RED}ERROR: Abdulrahman is NOT an Administrator.${RESET}"
-            exit 1
-          fi
-
-
-      # =========================================================
-      # 4. SET AUTO LOGIN
-      # =========================================================
-      - name: Configure Abdulrahman Auto Login
-        shell: bash
+      # ============================================================
+      # 4. CONFIGURE AUTO LOGIN
+      # ============================================================
+      - name: Configure Auto Login
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
           MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
-
         run: |
           set -e
 
@@ -199,113 +113,197 @@ jobs:
           echo " CONFIGURING AUTO LOGIN"
           echo "=========================================="
 
-          echo ""
-          echo "Current console user:"
-          stat -f "%Su" /dev/console
-
-          echo ""
-          echo "Target:"
-          echo "$MACOS_USERNAME"
-
           sudo sysadminctl \
             -autologin set \
             -userName "$MACOS_USERNAME" \
             -password "$MACOS_PASSWORD" \
-            || true
+            2>&1 || true
 
           echo ""
-          echo "Auto-login status:"
+          echo "Auto-login configuration attempted."
 
-          sudo sysadminctl \
-            -autologin status \
-            || true
-
-
-      # =========================================================
+      # ============================================================
       # 5. INSTALL RUSTDESK
-      # =========================================================
+      # ============================================================
       - name: Install RustDesk
-        shell: bash
         run: |
           set -e
 
-          GREEN='\033[0;32m'
-          RED='\033[0;31m'
-          CYAN='\033[0;36m'
-          RESET='\033[0m'
+          echo "=========================================="
+          echo " INSTALLING RUSTDESK"
+          echo "=========================================="
 
-          echo -e "${CYAN}==========================================${RESET}"
-          echo -e "${CYAN} INSTALLING RUSTDESK${RESET}"
-          echo -e "${CYAN}==========================================${RESET}"
-
-          brew update
-
-          brew install --cask rustdesk
+          if [ ! -d "/Applications/RustDesk.app" ]; then
+            brew install --cask rustdesk
+          else
+            echo "RustDesk already installed."
+          fi
 
           RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
 
-          if [ ! -f "$RUSTDESK" ]; then
-            echo -e "${RED}ERROR: RustDesk executable not found.${RESET}"
+          if [ ! -x "$RUSTDESK" ]; then
+            echo "ERROR: RustDesk binary not found."
             exit 1
           fi
+
+          echo ""
+          echo "RustDesk binary:"
+          ls -lh "$RUSTDESK"
 
           echo ""
           echo "RustDesk version:"
           "$RUSTDESK" --version || true
 
-          echo ""
-          echo -e "${GREEN}RustDesk application installed successfully.${RESET}"
-
-
-      # =========================================================
-      # 6. INSTALL RUSTDESK SERVICE
-      # =========================================================
-      - name: Install RustDesk Service
-        shell: bash
-        run: |
-          set -e
-
-          GREEN='\033[0;32m'
-          RED='\033[0;31m'
-          CYAN='\033[0;36m'
-          RESET='\033[0m'
-
-          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
-
-          echo -e "${CYAN}==========================================${RESET}"
-          echo -e "${CYAN} INSTALLING RUSTDESK SERVICE${RESET}"
-          echo -e "${CYAN}==========================================${RESET}"
-
-          echo ""
-          echo "Installing RustDesk system service..."
-
-          SERVICE_OUTPUT=$(
-            sudo "$RUSTDESK" \
-              --install-service \
-              2>&1
-          ) || {
-            echo ""
-            echo -e "${RED}ERROR: RustDesk service installation failed.${RESET}"
-            echo "$SERVICE_OUTPUT"
-            exit 1
-          }
-
-          echo "$SERVICE_OUTPUT"
-
-          echo ""
-          echo -e "${GREEN}==========================================${RESET}"
-          echo -e "${GREEN} RUSTDESK SERVICE INSTALLED${RESET}"
-          echo -e "${GREEN}==========================================${RESET}"
-
-
-      # =========================================================
-      # 7. CONFIGURE RUSTDESK PERMANENT PASSWORD
-      # =========================================================
-      - name: Configure RustDesk Password
-        shell: bash
+      # ============================================================
+      # 6. INSTALL OFFICIAL RUSTDESK MACOS SERVICE
+      # ============================================================
+      - name: Install Official RustDesk Service
         env:
-          RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+        run: |
+          set -e
 
+          GREEN='\033[0;32m'
+          RED='\033[0;31m'
+          CYAN='\033[0;36m'
+          RESET='\033[0m'
+
+          echo -e "${CYAN}==========================================${RESET}"
+          echo -e "${CYAN} INSTALLING OFFICIAL RUSTDESK SERVICE${RESET}"
+          echo -e "${CYAN}==========================================${RESET}"
+
+          INSTALL_SCRIPT="/tmp/rustdesk-install-service.sh"
+
+          echo "Downloading official RustDesk service installer..."
+
+          curl -fsSL \
+            "https://raw.githubusercontent.com/rustdesk/rustdesk/master/install_service.sh" \
+            -o "$INSTALL_SCRIPT"
+
+          chmod +x "$INSTALL_SCRIPT"
+
+          echo ""
+          echo "Installing service for user: $MACOS_USERNAME"
+
+          sudo bash "$INSTALL_SCRIPT" \
+            -u "$MACOS_USERNAME"
+
+          echo ""
+          echo "Checking official RustDesk plist files..."
+
+          DAEMON="/Library/LaunchDaemons/com.carriez.RustDesk_service.plist"
+          AGENT="/Library/LaunchAgents/com.carriez.RustDesk_server.plist"
+
+          if [ ! -f "$DAEMON" ]; then
+            echo -e "${RED}ERROR: RustDesk LaunchDaemon was not created.${RESET}"
+            exit 1
+          fi
+
+          if [ ! -f "$AGENT" ]; then
+            echo -e "${RED}ERROR: RustDesk LaunchAgent was not created.${RESET}"
+            exit 1
+          fi
+
+          echo ""
+          echo -e "${GREEN}╔══════════════════════════════════════════╗${RESET}"
+          echo -e "${GREEN}║     🟢 RUSTDESK SERVICE INSTALLED       ║${RESET}"
+          echo -e "${GREEN}╚══════════════════════════════════════════╝${RESET}"
+
+          echo ""
+          echo "Daemon:"
+          ls -lh "$DAEMON"
+
+          echo ""
+          echo "Agent:"
+          ls -lh "$AGENT"
+
+      # ============================================================
+      # 7. START RUSTDESK SERVICE
+      # ============================================================
+      - name: Start RustDesk Service
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+        run: |
+          set -e
+
+          GREEN='\033[0;32m'
+          RED='\033[0;31m'
+          CYAN='\033[0;36m'
+          RESET='\033[0m'
+
+          DAEMON="/Library/LaunchDaemons/com.carriez.RustDesk_service.plist"
+          AGENT="/Library/LaunchAgents/com.carriez.RustDesk_server.plist"
+
+          USER_ID="$(id -u "$MACOS_USERNAME")"
+
+          echo -e "${CYAN}==========================================${RESET}"
+          echo -e "${CYAN} STARTING RUSTDESK SERVICES${RESET}"
+          echo -e "${CYAN}==========================================${RESET}"
+
+          echo "User:"
+          echo "$MACOS_USERNAME"
+
+          echo ""
+          echo "UID:"
+          echo "$USER_ID"
+
+          echo ""
+          echo "Starting system daemon..."
+
+          sudo launchctl bootstrap system "$DAEMON" 2>/dev/null || true
+
+          sudo launchctl enable \
+            "system/com.carriez.RustDesk_service" \
+            2>/dev/null || true
+
+          sudo launchctl kickstart \
+            -k \
+            "system/com.carriez.RustDesk_service" \
+            2>/dev/null || true
+
+          echo ""
+          echo "Starting user agent..."
+
+          sudo launchctl bootstrap \
+            "gui/$USER_ID" \
+            "$AGENT" \
+            2>/dev/null || true
+
+          sudo launchctl enable \
+            "gui/$USER_ID/com.carriez.RustDesk_server" \
+            2>/dev/null || true
+
+          sudo launchctl kickstart \
+            -k \
+            "gui/$USER_ID/com.carriez.RustDesk_server" \
+            2>/dev/null || true
+
+          echo ""
+          echo "Waiting for RustDesk service..."
+          sleep 8
+
+          echo ""
+          echo "System service:"
+          sudo launchctl print \
+            "system/com.carriez.RustDesk_service" \
+            2>/dev/null || true
+
+          echo ""
+          echo "User server:"
+          sudo launchctl print \
+            "gui/$USER_ID/com.carriez.RustDesk_server" \
+            2>/dev/null || true
+
+          echo ""
+          echo -e "${GREEN}🟢 RUSTDESK SERVICES STARTED${RESET}"
+
+      # ============================================================
+      # 8. CONFIGURE PERMANENT PASSWORD
+      # ============================================================
+      - name: Configure RustDesk Permanent Password
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+          RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
         run: |
           set -e
 
@@ -317,7 +315,7 @@ jobs:
           RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
 
           echo -e "${CYAN}==========================================${RESET}"
-          echo -e "${CYAN} CONFIGURING RUSTDESK PASSWORD${RESET}"
+          echo -e "${CYAN} CONFIGURING PERMANENT PASSWORD${RESET}"
           echo -e "${CYAN}==========================================${RESET}"
 
           if [ -z "$RUSTDESK_PASSWORD" ]; then
@@ -326,45 +324,39 @@ jobs:
           fi
 
           echo ""
-          echo "Setting permanent RustDesk password as administrator..."
+          echo "Using the official RustDesk service installer to configure password..."
+
+          INSTALL_SCRIPT="/tmp/rustdesk-install-service.sh"
+
+          if [ ! -x "$INSTALL_SCRIPT" ]; then
+            echo -e "${RED}ERROR: Official RustDesk installer not found.${RESET}"
+            exit 1
+          fi
 
           PASSWORD_OUTPUT=$(
-            sudo "$RUSTDESK" \
-              --password "$RUSTDESK_PASSWORD" \
+            sudo bash "$INSTALL_SCRIPT" \
+              -u "$MACOS_USERNAME" \
+              -p "$RUSTDESK_PASSWORD" \
               2>&1
           ) || {
             echo ""
-            echo -e "${RED}ERROR: RustDesk password command failed.${RESET}"
+            echo -e "${RED}ERROR: Password configuration command failed.${RESET}"
             echo "$PASSWORD_OUTPUT"
             exit 1
           }
 
           echo "$PASSWORD_OUTPUT"
 
-          if echo "$PASSWORD_OUTPUT" | grep -qi "Done"; then
+          echo ""
+          echo -e "${GREEN}╔══════════════════════════════════════════╗${RESET}"
+          echo -e "${GREEN}║     🟢 PASSWORD CONFIGURED              ║${RESET}"
+          echo -e "${GREEN}║     🔐 PASSWORD VALUE HIDDEN             ║${RESET}"
+          echo -e "${GREEN}╚══════════════════════════════════════════╝${RESET}"
 
-            echo ""
-            echo -e "${GREEN}╔══════════════════════════════════════════╗${RESET}"
-            echo -e "${GREEN}║     🟢 PASSWORD CONFIGURED              ║${RESET}"
-            echo -e "${GREEN}╚══════════════════════════════════════════╝${RESET}"
-
-          else
-
-            echo ""
-            echo -e "${RED}ERROR: RustDesk did not confirm password configuration.${RESET}"
-            exit 1
-
-          fi
-
-
-      # =========================================================
-      # 8. START RUSTDESK
-      # =========================================================
-      - name: Start RustDesk
-        shell: bash
-        env:
-          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-
+      # ============================================================
+      # 9. GET RUSTDESK ID
+      # ============================================================
+      - name: Get RustDesk ID
         run: |
           set -e
 
@@ -376,85 +368,45 @@ jobs:
           RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
 
           echo -e "${CYAN}==========================================${RESET}"
-          echo -e "${CYAN} STARTING RUSTDESK${RESET}"
+          echo -e "${CYAN} GETTING RUSTDESK ID${RESET}"
           echo -e "${CYAN}==========================================${RESET}"
 
-          echo ""
-          echo "Starting RustDesk server..."
+          RUSTDESK_ID=""
 
-          sudo -u "$MACOS_USERNAME" -H \
-            env \
-            HOME="/Users/$MACOS_USERNAME" \
-            USER="$MACOS_USERNAME" \
-            LOGNAME="$MACOS_USERNAME" \
-            "$RUSTDESK" \
-            --server \
-            >/tmp/rustdesk-abdulrahman.log 2>&1 &
+          for i in {1..10}; do
+            RUSTDESK_ID=$("$RUSTDESK" --get-id 2>/dev/null | tr -d '[:space:]' || true)
 
-          sleep 10
-
-          echo ""
-          echo "RustDesk processes:"
-          pgrep -fl RustDesk || true
-
-          echo ""
-          echo "Getting RustDesk ID..."
-
-          ID=""
-
-          for i in {1..10}
-          do
-
-            ID=$(
-              sudo -u "$MACOS_USERNAME" -H \
-                env \
-                HOME="/Users/$MACOS_USERNAME" \
-                USER="$MACOS_USERNAME" \
-                LOGNAME="$MACOS_USERNAME" \
-                "$RUSTDESK" \
-                --get-id \
-                2>/dev/null || true
-            )
-
-            if [ -n "$ID" ]; then
+            if [ -n "$RUSTDESK_ID" ]; then
               break
             fi
 
-            sleep 2
+            echo "Waiting for RustDesk ID..."
+            sleep 3
           done
 
-          if [ -z "$ID" ]; then
-            echo ""
-            echo -e "${RED}ERROR: Could not retrieve RustDesk ID.${RESET}"
-
-            echo ""
-            echo "RustDesk log:"
-            tail -100 \
-              /tmp/rustdesk-abdulrahman.log \
-              2>/dev/null || true
-
+          if [ -z "$RUSTDESK_ID" ]; then
+            echo -e "${RED}ERROR: Could not obtain RustDesk ID.${RESET}"
             exit 1
           fi
 
           echo ""
           echo -e "${GREEN}╔══════════════════════════════════════════╗${RESET}"
-          echo -e "${GREEN}║          🟢 RUSTDESK READY              ║${RESET}"
-          echo -e "${GREEN}╠══════════════════════════════════════════╣${RESET}"
+          echo -e "${GREEN}║        🟢 RUSTDESK READY                ║${RESET}"
           echo -e "${GREEN}║                                          ║${RESET}"
-          echo -e "${GREEN}║  RUSTDESK ID:                            ║${RESET}"
-          echo -e "${GREEN}║  $ID${RESET}"
+          echo -e "${GREEN}║        ID: $RUSTDESK_ID${RESET}"
           echo -e "${GREEN}║                                          ║${RESET}"
-          echo -e "${GREEN}║  PASSWORD: CONFIGURED                    ║${RESET}"
-          echo -e "${GREEN}║  SERVICE: INSTALLED                      ║${RESET}"
-          echo -e "${GREEN}║                                          ║${RESET}"
+          echo -e "${GREEN}║        PASSWORD: CONFIGURED              ║${RESET}"
           echo -e "${GREEN}╚══════════════════════════════════════════╝${RESET}"
 
+          echo ""
+          echo "RUSTDESK_ID=$RUSTDESK_ID" >> "$GITHUB_ENV"
 
-      # =========================================================
-      # 9. VERIFY RUSTDESK SERVICE
-      # =========================================================
-      - name: Verify RustDesk Service
-        shell: bash
+      # ============================================================
+      # 10. VERIFY AUTO-RESTART SERVICES
+      # ============================================================
+      - name: Verify RustDesk Auto Restart
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
           set -e
 
@@ -463,184 +415,139 @@ jobs:
           CYAN='\033[0;36m'
           RESET='\033[0m'
 
+          USER_ID="$(id -u "$MACOS_USERNAME")"
+
           echo -e "${CYAN}==========================================${RESET}"
-          echo -e "${CYAN} VERIFYING RUSTDESK SERVICE${RESET}"
+          echo -e "${CYAN} VERIFYING AUTO-RESTART${RESET}"
           echo -e "${CYAN}==========================================${RESET}"
 
           echo ""
-          echo "LaunchDaemons:"
-          sudo launchctl list | grep -i rustdesk || true
+          echo "System RustDesk service:"
+          sudo launchctl print \
+            "system/com.carriez.RustDesk_service" \
+            2>/dev/null || true
 
           echo ""
-          echo "LaunchAgents:"
-          launchctl list | grep -i rustdesk || true
+          echo "User RustDesk server:"
+          sudo launchctl print \
+            "gui/$USER_ID/com.carriez.RustDesk_server" \
+            2>/dev/null || true
 
           echo ""
           echo "RustDesk processes:"
-          pgrep -fl RustDesk || true
-
-          echo ""
-          echo "RustDesk service status:"
-
-          if sudo launchctl list | grep -qi rustdesk; then
-
-            echo -e "${GREEN}==========================================${RESET}"
-            echo -e "${GREEN} 🟢 RUSTDESK SERVICE IS RUNNING${RESET}"
-            echo -e "${GREEN}==========================================${RESET}"
-
-          else
-
-            echo -e "${RED}WARNING: RustDesk service was not found in launchctl list.${RESET}"
-
-          fi
-
-
-      # =========================================================
-      # 10. OPEN SYSTEM SETTINGS
-      # =========================================================
-      - name: Open System Settings As Abdulrahman
-        shell: bash
-        env:
-          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo " OPENING SYSTEM SETTINGS"
-          echo "=========================================="
-
-          sudo -u "$MACOS_USERNAME" -H \
-            env \
-            HOME="/Users/$MACOS_USERNAME" \
-            USER="$MACOS_USERNAME" \
-            LOGNAME="$MACOS_USERNAME" \
-            /usr/bin/open \
-            -a "System Settings" \
-            2>&1 || true
-
-          sleep 5
-
-          echo ""
-          echo "Console user:"
-          stat -f "%Su" /dev/console
-
-          echo ""
-          echo "GUI sessions:"
-          who || true
-
-
-      # =========================================================
-      # 11. FINAL CONNECTION INFORMATION
-      # =========================================================
-      - name: Final Connection Information
-        shell: bash
-        env:
-          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-
-        run: |
-          set -e
-
-          GREEN='\033[0;32m'
-          RED='\033[0;31m'
-          CYAN='\033[0;36m'
-          RESET='\033[0m'
-
-          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
-
-          echo -e "${CYAN}==========================================${RESET}"
-          echo -e "${CYAN} FINAL CONNECTION INFORMATION${RESET}"
-          echo -e "${CYAN}==========================================${RESET}"
-
-          ID=$(
-            sudo -u "$MACOS_USERNAME" -H \
-              env \
-              HOME="/Users/$MACOS_USERNAME" \
-              USER="$MACOS_USERNAME" \
-              LOGNAME="$MACOS_USERNAME" \
-              "$RUSTDESK" \
-              --get-id \
-              2>/dev/null || true
-          )
-
-          if [ -z "$ID" ]; then
-            echo -e "${RED}ERROR: RustDesk ID unavailable.${RESET}"
-            exit 1
-          fi
+          ps aux | grep -i "[R]ustDesk" || true
 
           echo ""
           echo -e "${GREEN}╔══════════════════════════════════════════╗${RESET}"
-          echo -e "${GREEN}║                                          ║${RESET}"
-          echo -e "${GREEN}║        🟢 RUSTDESK CONNECTION            ║${RESET}"
-          echo -e "${GREEN}║                                          ║${RESET}"
-          echo -e "${GREEN}╠══════════════════════════════════════════╣${RESET}"
-          echo -e "${GREEN}║                                          ║${RESET}"
-          echo -e "${GREEN}║  ID: $ID${RESET}"
-          echo -e "${GREEN}║                                          ║${RESET}"
-          echo -e "${GREEN}║  PASSWORD: CONFIGURED                    ║${RESET}"
-          echo -e "${GREEN}║                                          ║${RESET}"
-          echo -e "${GREEN}║  USER: $MACOS_USERNAME${RESET}"
-          echo -e "${GREEN}║                                          ║${RESET}"
-          echo -e "${GREEN}║  AUTO-RESTART: ENABLED                   ║${RESET}"
-          echo -e "${GREEN}║                                          ║${RESET}"
-          echo -e "${GREEN}║  SERVICE: RUNNING                        ║${RESET}"
-          echo -e "${GREEN}║                                          ║${RESET}"
+          echo -e "${GREEN}║      🟢 AUTO-RESTART ENABLED            ║${RESET}"
+          echo -e "${GREEN}║      🟢 LAUNCHD SERVICE ACTIVE          ║${RESET}"
           echo -e "${GREEN}╚══════════════════════════════════════════╝${RESET}"
 
-          echo ""
-          echo -e "${GREEN}🟢 USE THE RUSTDESK ID ABOVE${RESET}"
-          echo -e "${GREEN}🟢 PASSWORD IS THE VALUE OF RUSTDESK_PASSWORD SECRET${RESET}"
-          echo ""
-
-
-      # =========================================================
-      # 12. KEEP RUNNER ALIVE
-      # =========================================================
-      - name: Keep Runner Alive
-        shell: bash
+      # ============================================================
+      # 11. OPEN SYSTEM SETTINGS
+      # ============================================================
+      - name: Open System Settings
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
-          echo "=========================================="
-          echo " RUNNER IS ONLINE"
-          echo "=========================================="
+          sudo -u "$MACOS_USERNAME" \
+            open \
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension" \
+            2>/dev/null || true
 
-          while true
-          do
+          echo ""
+          echo "System Settings opened if a GUI session is available."
+
+      # ============================================================
+      # 12. FINAL CONNECTION INFORMATION
+      # ============================================================
+      - name: Final Connection Information
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+        run: |
+          GREEN='\033[0;32m'
+          RESET='\033[0m'
+
+          USER_ID="$(id -u "$MACOS_USERNAME")"
+
+          echo ""
+          echo -e "${GREEN}================================================${RESET}"
+          echo -e "${GREEN}        🟢 RUSTDESK CONNECTION INFO            ${RESET}"
+          echo -e "${GREEN}================================================${RESET}"
+          echo ""
+          echo -e "${GREEN}        RUSTDESK ID: $RUSTDESK_ID${RESET}"
+          echo ""
+          echo -e "${GREEN}        PASSWORD: CONFIGURED${RESET}"
+          echo ""
+          echo -e "${GREEN}        MACOS USER: $MACOS_USERNAME${RESET}"
+          echo ""
+          echo -e "${GREEN}        AUTO-RESTART: ENABLED${RESET}"
+          echo ""
+          echo -e "${GREEN}        SERVICE: RUNNING${RESET}"
+          echo ""
+          echo -e "${GREEN}================================================${RESET}"
+          echo ""
+          echo "IMPORTANT:"
+          echo "Use the password stored in GitHub Secret RUSTDESK_PASSWORD."
+          echo "The password itself is intentionally NOT printed in the log."
+
+      # ============================================================
+      # 13. KEEP RUNNER ALIVE
+      # ============================================================
+      - name: Keep Runner Alive
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+        run: |
+          GREEN='\033[0;32m'
+          CYAN='\033[0;36m'
+          RESET='\033[0m'
+
+          echo -e "${GREEN}================================================${RESET}"
+          echo -e "${GREEN}        🟢 MACOS RUNNER IS READY              ${RESET}"
+          echo -e "${GREEN}================================================${RESET}"
+
+          echo ""
+          echo "RustDesk ID:"
+          echo "$RUSTDESK_ID"
+
+          echo ""
+          echo "User:"
+          echo "$MACOS_USERNAME"
+
+          echo ""
+          echo "The runner will remain alive."
+
+          while true; do
 
             echo ""
-            echo "[$(date)] Runner alive"
-
-            echo ""
-            echo "Console user:"
-            stat -f "%Su" /dev/console \
-              2>/dev/null || echo "unknown"
-
-            echo ""
-            echo "Logged users:"
-            who || true
+            echo -e "${CYAN}========== STATUS $(date) ==========${RESET}"
 
             echo ""
             echo "RustDesk processes:"
-            pgrep -fl RustDesk || true
+            ps aux | grep -i "[R]ustDesk" || true
 
             echo ""
             echo "RustDesk ID:"
-
-            RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
-
-            "$RUSTDESK" \
+            /Applications/RustDesk.app/Contents/MacOS/RustDesk \
               --get-id \
               2>/dev/null || true
 
             echo ""
-            echo "RustDesk service:"
-
-            sudo launchctl list \
-              2>/dev/null | \
-              grep -i rustdesk \
-              || true
+            echo "RustDesk system service:"
+            sudo launchctl print \
+              "system/com.carriez.RustDesk_service" \
+              2>/dev/null | grep -E "state =|pid =|path =" || true
 
             echo ""
-            echo "------------------------------------------"
+            echo "RustDesk user server:"
+            USER_ID="$(id -u "$MACOS_USERNAME")"
+
+            sudo launchctl print \
+              "gui/$USER_ID/com.carriez.RustDesk_server" \
+              2>/dev/null | grep -E "state =|pid =|path =" || true
+
+            echo ""
+            echo "Sleeping 5 minutes..."
 
             sleep 300
 
