@@ -10,9 +10,9 @@ jobs:
 
     steps:
 
-      # ==========================================
-      # 1. SYSTEM INFO
-      # ==========================================
+      # ============================================================
+      # 1. SYSTEM INFORMATION
+      # ============================================================
       - name: System Information
         shell: bash
         run: |
@@ -22,7 +22,10 @@ jobs:
           echo " SYSTEM INFORMATION"
           echo "=========================================="
 
+          echo ""
+          echo "macOS:"
           sw_vers
+
           echo ""
           echo "Architecture:"
           uname -m
@@ -40,9 +43,9 @@ jobs:
           who || true
 
 
-      # ==========================================
+      # ============================================================
       # 2. CREATE ABDULRAHMAN
-      # ==========================================
+      # ============================================================
       - name: Create Abdulrahman
         shell: bash
         env:
@@ -65,9 +68,20 @@ jobs:
             exit 1
           fi
 
+          if [[ ! "$MACOS_USERNAME" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+            echo "ERROR: Invalid username."
+            exit 1
+          fi
+
+          echo ""
+          echo "Username:"
+          echo "$MACOS_USERNAME"
+
           if id "$MACOS_USERNAME" >/dev/null 2>&1; then
+            echo ""
             echo "User already exists."
           else
+            echo ""
             echo "Creating user..."
 
             sudo sysadminctl \
@@ -88,7 +102,7 @@ jobs:
             admin
 
           echo ""
-          echo "User information:"
+          echo "User:"
           id "$MACOS_USERNAME"
 
           echo ""
@@ -96,9 +110,9 @@ jobs:
           id -Gn "$MACOS_USERNAME"
 
 
-      # ==========================================
+      # ============================================================
       # 3. VERIFY USER
-      # ==========================================
+      # ============================================================
       - name: Verify User
         shell: bash
         env:
@@ -123,15 +137,25 @@ jobs:
           id -Gn "$MACOS_USERNAME"
 
           echo ""
-          echo "Home:"
+          echo "Home directory:"
+
           dscl . -read \
             "/Users/$MACOS_USERNAME" \
             NFSHomeDirectory
 
+          echo ""
+          echo "Administrator membership:"
 
-      # ==========================================
+          dseditgroup \
+            -o checkmember \
+            -m "$MACOS_USERNAME" \
+            admin \
+            || true
+
+
+      # ============================================================
       # 4. INSTALL NOMACHINE
-      # ==========================================
+      # ============================================================
       - name: Install NoMachine
         shell: bash
         run: |
@@ -141,127 +165,283 @@ jobs:
           echo " INSTALLING NOMACHINE"
           echo "=========================================="
 
-          ARCH="$(uname -m)"
-
           echo ""
           echo "Architecture:"
-          echo "$ARCH"
-
-          if [ "$ARCH" = "arm64" ]; then
-            NOMACHINE_URL="https://download.nomachine.com/download/8.18/MacOSX/nomachine_8.18.4_1_arm64.dmg"
-          else
-            NOMACHINE_URL="https://download.nomachine.com/download/8.18/MacOSX/nomachine_8.18.4_1_x86_64.dmg"
-          fi
+          uname -m
 
           echo ""
-          echo "Downloading NoMachine..."
+          echo "Downloading NoMachine Personal Edition..."
 
-          curl -L \
+          NOMACHINE_URL="https://download.nomachine.com/download/10.0/MacOSX/nomachine_10.0.60_1.dmg"
+
+          curl \
+            -L \
             --fail \
-            --retry 3 \
+            --show-error \
+            --retry 5 \
+            --retry-delay 3 \
             "$NOMACHINE_URL" \
             -o /tmp/nomachine.dmg
 
           echo ""
+          echo "Downloaded file:"
+
+          ls -lh /tmp/nomachine.dmg
+
+          echo ""
+          echo "File type:"
+
+          file /tmp/nomachine.dmg
+
+          echo ""
+          echo "Checking DMG integrity..."
+
+          hdiutil imageinfo \
+            /tmp/nomachine.dmg \
+            >/dev/null
+
+          echo ""
+          echo "DMG integrity OK."
+
+
+          # --------------------------------------------------------
+          # Tell NoMachine installer not to automatically start
+          # services before installation finishes.
+          # --------------------------------------------------------
+
+          echo ""
+          echo "Preparing NoMachine installation..."
+
+          touch /tmp/NX_NOSTART
+
+
+          # --------------------------------------------------------
+          # Mount DMG
+          # --------------------------------------------------------
+
+          echo ""
           echo "Mounting NoMachine DMG..."
 
-          MOUNT_POINT=$(
+          MOUNT_OUTPUT=$(
             hdiutil attach \
               /tmp/nomachine.dmg \
               -nobrowse \
-              | awk '/Volumes/ {print substr($0,index($0,$3))}'
+              -readonly
           )
+
+          echo ""
+          echo "Mount output:"
+          echo "$MOUNT_OUTPUT"
+
+          MOUNT_POINT=$(
+            echo "$MOUNT_OUTPUT" \
+              | grep "/Volumes/" \
+              | sed 's/^.*	//' \
+              | head -1
+          )
+
+          if [ -z "$MOUNT_POINT" ]; then
+            echo ""
+            echo "ERROR: Could not determine mount point."
+
+            hdiutil info || true
+
+            exit 1
+          fi
 
           echo ""
           echo "Mounted at:"
           echo "$MOUNT_POINT"
 
-          echo ""
-          echo "DMG contents:"
-          ls -la "$MOUNT_POINT"
+
+          # --------------------------------------------------------
+          # Locate NoMachine.pkg
+          # --------------------------------------------------------
 
           echo ""
-          echo "Installing NoMachine..."
+          echo "Searching for NoMachine.pkg..."
 
-          INSTALLER="$MOUNT_POINT/NoMachine.app"
+          PKG_PATH=""
 
-          if [ -d "$INSTALLER" ]; then
-            sudo cp -R \
-              "$INSTALLER" \
-              /Applications/NoMachine.app
+          if [ -f "$MOUNT_POINT/NoMachine.pkg" ]; then
+            PKG_PATH="$MOUNT_POINT/NoMachine.pkg"
           else
-            echo "ERROR: NoMachine.app not found."
+            PKG_PATH=$(
+              find "$MOUNT_POINT" \
+                -maxdepth 3 \
+                -type f \
+                -name "NoMachine.pkg" \
+                -print \
+                | head -1
+            )
+          fi
+
+          if [ -z "$PKG_PATH" ]; then
+            echo ""
+            echo "ERROR: NoMachine.pkg not found."
+
+            echo ""
+            echo "DMG contents:"
+
+            find "$MOUNT_POINT" \
+              -maxdepth 3 \
+              -print \
+              | head -100
+
             hdiutil detach "$MOUNT_POINT" || true
+
             exit 1
           fi
 
           echo ""
-          echo "Unmounting..."
+          echo "Package:"
+          echo "$PKG_PATH"
 
-          hdiutil detach "$MOUNT_POINT" || true
+
+          # --------------------------------------------------------
+          # Install
+          # --------------------------------------------------------
 
           echo ""
-          echo "NoMachine installed."
+          echo "Installing NoMachine..."
 
-          ls -la /Applications/NoMachine.app
+          sudo installer \
+            -pkg "$PKG_PATH" \
+            -target /
 
 
-      # ==========================================
-      # 5. START NOMACHINE
-      # ==========================================
-      - name: Start NoMachine
+          # --------------------------------------------------------
+          # Unmount
+          # --------------------------------------------------------
+
+          echo ""
+          echo "Unmounting DMG..."
+
+          hdiutil detach \
+            "$MOUNT_POINT" \
+            || true
+
+          rm -f /tmp/NX_NOSTART
+
+
+          # --------------------------------------------------------
+          # Verify installation
+          # --------------------------------------------------------
+
+          echo ""
+          echo "=========================================="
+          echo " NOMACHINE INSTALLED"
+          echo "=========================================="
+
+          echo ""
+          echo "NoMachine directory:"
+
+          ls -la \
+            /usr/NX \
+            2>/dev/null \
+            || true
+
+          echo ""
+          echo "NX Server:"
+
+          if [ -f "/etc/NX/nxserver" ]; then
+            echo "/etc/NX/nxserver FOUND"
+          else
+            echo "WARNING: /etc/NX/nxserver not found"
+          fi
+
+          echo ""
+          echo "NoMachine version:"
+
+          if [ -x "/etc/NX/nxserver" ]; then
+            sudo /etc/NX/nxserver --version \
+              || true
+          fi
+
+
+      # ============================================================
+      # 5. START NOMACHINE SERVER
+      # ============================================================
+      - name: Start NoMachine Server
         shell: bash
         run: |
           set -e
 
           echo "=========================================="
-          echo " STARTING NOMACHINE"
+          echo " STARTING NOMACHINE SERVER"
           echo "=========================================="
 
-          echo ""
-          echo "Searching for NoMachine server..."
+          if [ ! -x "/etc/NX/nxserver" ]; then
+            echo ""
+            echo "ERROR: nxserver executable not found."
 
-          find /Applications/NoMachine.app \
-            -maxdepth 5 \
-            -type f \
-            \( \
+            echo ""
+            echo "Searching..."
+
+            sudo find /etc /usr \
+              -type f \
               -name "nxserver" \
-              -o \
-              -name "nxnode" \
-            \) \
-            2>/dev/null || true
+              2>/dev/null \
+              | head -20
+
+            exit 1
+          fi
 
           echo ""
-          echo "Starting NoMachine application..."
+          echo "NX Server:"
+          echo "/etc/NX/nxserver"
 
-          sudo open -a "/Applications/NoMachine.app" || true
+          echo ""
+          echo "Starting NoMachine services..."
+
+          sudo /etc/NX/nxserver \
+            --startup
 
           sleep 10
 
           echo ""
-          echo "NoMachine processes:"
+          echo "Checking NX Server..."
 
-          ps aux | grep -i nomachine | grep -v grep || true
+          sudo /etc/NX/nxserver \
+            --status \
+            || true
+
+          echo ""
+          echo "NoMachine version:"
+
+          sudo /etc/NX/nxserver \
+            --version \
+            || true
+
+          echo ""
+          echo "Subscription information:"
+
+          sudo /etc/NX/nxserver \
+            --subscriptioninfo \
+            || true
 
           echo ""
           echo "Listening ports:"
 
-          sudo lsof -nP -iTCP -sTCP:LISTEN \
+          sudo lsof \
+            -nP \
+            -iTCP \
+            -sTCP:LISTEN \
             2>/dev/null \
-            | grep -Ei "nx|4000|nomachine" \
+            | grep -E "4000|nx|nomachine" \
             || true
 
 
-      # ==========================================
-      # 6. NETWORK INFORMATION
-      # ==========================================
-      - name: Network Information
+      # ============================================================
+      # 6. NOMACHINE NETWORK CHECK
+      # ============================================================
+      - name: NoMachine Network Check
         shell: bash
         run: |
           set -e
 
           echo "=========================================="
-          echo " NETWORK INFORMATION"
+          echo " NOMACHINE NETWORK CHECK"
           echo "=========================================="
 
           echo ""
@@ -269,7 +449,7 @@ jobs:
           hostname
 
           echo ""
-          echo "Local IP addresses:"
+          echo "Local IPv4 addresses:"
 
           ifconfig \
             | grep "inet " \
@@ -277,7 +457,17 @@ jobs:
             || true
 
           echo ""
-          echo "Listening TCP ports:"
+          echo "Port 4000 check:"
+
+          sudo lsof \
+            -nP \
+            -iTCP:4000 \
+            -sTCP:LISTEN \
+            2>/dev/null \
+            || true
+
+          echo ""
+          echo "All listening TCP ports:"
 
           sudo lsof \
             -nP \
@@ -287,9 +477,9 @@ jobs:
             || true
 
 
-      # ==========================================
+      # ============================================================
       # 7. INSTALL RUSTDESK
-      # ==========================================
+      # ============================================================
       - name: Install RustDesk
         shell: bash
         run: |
@@ -306,6 +496,7 @@ jobs:
           RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
 
           if [ ! -f "$RUSTDESK" ]; then
+            echo ""
             echo "ERROR: RustDesk executable not found."
             exit 1
           fi
@@ -313,12 +504,14 @@ jobs:
           echo ""
           echo "RustDesk version:"
 
-          "$RUSTDESK" --version || true
+          "$RUSTDESK" \
+            --version \
+            || true
 
 
-      # ==========================================
+      # ============================================================
       # 8. CONFIGURE RUSTDESK
-      # ==========================================
+      # ============================================================
       - name: Configure RustDesk
         shell: bash
         env:
@@ -361,9 +554,14 @@ jobs:
           echo ""
           echo "Setting permanent password..."
 
-          "$RUSTDESK" \
-            --password "$RUSTDESK_PASSWORD" \
-            2>&1 || true
+          PASSWORD_OUTPUT=$(
+            sudo "$RUSTDESK" \
+              --password "$RUSTDESK_PASSWORD" \
+              2>&1 \
+              || true
+          )
+
+          echo "$PASSWORD_OUTPUT"
 
           sleep 5
 
@@ -377,7 +575,8 @@ jobs:
           sleep 5
 
           nohup "$RUSTDESK" \
-            >/tmp/rustdesk.log 2>&1 &
+            >/tmp/rustdesk.log \
+            2>&1 &
 
           sleep 10
 
@@ -398,14 +597,15 @@ jobs:
           echo "$FINAL_ID"
 
           echo ""
-          echo "RustDesk process:"
+          echo "RustDesk processes:"
 
-          pgrep -fl RustDesk || true
+          pgrep -fl RustDesk \
+            || true
 
 
-      # ==========================================
+      # ============================================================
       # 9. START RUSTDESK AS ABDULRAHMAN
-      # ==========================================
+      # ============================================================
       - name: Start RustDesk As Abdulrahman
         shell: bash
         env:
@@ -414,13 +614,18 @@ jobs:
           set -e
 
           echo "=========================================="
-          echo " STARTING RUSTDESK AS USER"
+          echo " STARTING RUSTDESK AS ABDULRAHMAN"
           echo "=========================================="
 
           RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
 
           echo ""
-          echo "Starting as:"
+          echo "Current console user:"
+
+          stat -f "%Su" /dev/console
+
+          echo ""
+          echo "Starting RustDesk as:"
           echo "$MACOS_USERNAME"
 
           sudo -u "$MACOS_USERNAME" \
@@ -430,30 +635,43 @@ jobs:
             USER="$MACOS_USERNAME" \
             LOGNAME="$MACOS_USERNAME" \
             nohup "$RUSTDESK" \
-            >/tmp/rustdesk-user.log 2>&1 &
+            >/tmp/rustdesk-abdulrahman.log \
+            2>&1 &
 
           sleep 10
 
           echo ""
           echo "RustDesk processes:"
 
-          pgrep -fl RustDesk || true
+          pgrep -fl RustDesk \
+            || true
+
+          echo ""
+          echo "RustDesk log:"
+
+          tail -50 \
+            /tmp/rustdesk-abdulrahman.log \
+            2>/dev/null \
+            || true
 
 
-      # ==========================================
-      # 10. FINAL STATUS
-      # ==========================================
-      - name: Final Status
+      # ============================================================
+      # 10. FINAL INFORMATION
+      # ============================================================
+      - name: Final Information
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
           echo "=========================================="
-          echo " FINAL STATUS"
+          echo " FINAL INFORMATION"
           echo "=========================================="
 
           echo ""
-          echo "macOS:"
+          echo "=========================================="
+          echo " MACOS"
+          echo "=========================================="
+
           sw_vers
 
           echo ""
@@ -465,36 +683,93 @@ jobs:
           stat -f "%Su" /dev/console
 
           echo ""
-          echo "Created user:"
+          echo "=========================================="
+          echo " ABDULRAHMAN"
+          echo "=========================================="
+
           id "$MACOS_USERNAME"
 
           echo ""
-          echo "RustDesk:"
-          pgrep -fl RustDesk || true
+          echo "Groups:"
+
+          id -Gn "$MACOS_USERNAME"
 
           echo ""
-          echo "NoMachine:"
-          ps aux | grep -i nomachine | grep -v grep || true
+          echo "=========================================="
+          echo " NOMACHINE"
+          echo "=========================================="
+
+          if [ -x "/etc/NX/nxserver" ]; then
+            sudo /etc/NX/nxserver \
+              --status \
+              || true
+
+            echo ""
+
+            sudo /etc/NX/nxserver \
+              --subscriptioninfo \
+              || true
+          fi
 
           echo ""
-          echo "Listening ports:"
+          echo "Port 4000:"
+
+          sudo lsof \
+            -nP \
+            -iTCP:4000 \
+            -sTCP:LISTEN \
+            2>/dev/null \
+            || true
+
+          echo ""
+          echo "=========================================="
+          echo " RUSTDESK"
+          echo "=========================================="
+
+          pgrep -fl RustDesk \
+            || true
+
+          echo ""
+          echo "RustDesk log:"
+
+          tail -50 \
+            /tmp/rustdesk.log \
+            2>/dev/null \
+            || true
+
+          echo ""
+          echo "=========================================="
+          echo " NETWORK"
+          echo "=========================================="
+
+          echo ""
+          echo "Hostname:"
+          hostname
+
+          echo ""
+          echo "IPv4:"
+
+          ifconfig \
+            | grep "inet " \
+            | grep -v "127.0.0.1" \
+            || true
+
+          echo ""
+          echo "=========================================="
+          echo " LISTENING PORTS"
+          echo "=========================================="
+
           sudo lsof \
             -nP \
             -iTCP \
             -sTCP:LISTEN \
             2>/dev/null \
-            | grep -E "4000|nx|RustDesk" \
             || true
 
-          echo ""
-          echo "=========================================="
-          echo " REMOTE ACCESS SERVICES STARTED"
-          echo "=========================================="
 
-
-      # ==========================================
+      # ============================================================
       # 11. KEEP RUNNER ALIVE
-      # ==========================================
+      # ============================================================
       - name: Keep Runner Alive
         shell: bash
         run: |
@@ -502,36 +777,62 @@ jobs:
           echo " MACOS RUNNER ONLINE"
           echo "=========================================="
 
+          echo ""
+          echo "RustDesk + NoMachine are running."
+
+          echo ""
+          echo "The GitHub Actions job must remain running"
+          echo "for remote access to remain available."
+
           while true
           do
+
             echo ""
-            echo "[$(date)] Runner alive"
+            echo "=========================================="
+            echo "[$(date)] RUNNER ALIVE"
+            echo "=========================================="
 
             echo ""
             echo "Console user:"
+
             stat -f "%Su" /dev/console \
-              2>/dev/null || true
+              2>/dev/null \
+              || true
 
             echo ""
             echo "RustDesk:"
-            pgrep -fl RustDesk || true
+
+            pgrep -fl RustDesk \
+              || true
 
             echo ""
             echo "NoMachine:"
-            ps aux \
-              | grep -i nomachine \
-              | grep -v grep \
+
+            if [ -x "/etc/NX/nxserver" ]; then
+              sudo /etc/NX/nxserver \
+                --status \
+                2>/dev/null \
+                || true
+            fi
+
+            echo ""
+            echo "Port 4000:"
+
+            sudo lsof \
+              -nP \
+              -iTCP:4000 \
+              -sTCP:LISTEN \
+              2>/dev/null \
               || true
 
             echo ""
-            echo "Listening ports:"
-            sudo lsof \
-              -nP \
-              -iTCP \
-              -sTCP:LISTEN \
-              2>/dev/null \
-              | grep -E "4000|nx|RustDesk" \
+            echo "Current IPv4:"
+
+            ifconfig \
+              | grep "inet " \
+              | grep -v "127.0.0.1" \
               || true
 
             sleep 300
+
           done
