@@ -79,12 +79,9 @@ jobs:
           echo "$MACOS_USERNAME"
 
           if id "$MACOS_USERNAME" >/dev/null 2>&1; then
-
             echo ""
             echo "User already exists."
-
           else
-
             echo ""
             echo "Creating user..."
 
@@ -94,7 +91,6 @@ jobs:
               -password "$MACOS_PASSWORD"
 
             echo "User created."
-
           fi
 
           echo ""
@@ -354,21 +350,26 @@ jobs:
 
           RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
 
+          USER_UID=$(id -u "$MACOS_USERNAME")
+
           echo ""
           echo "Console user:"
           stat -f "%Su" /dev/console
 
           echo ""
-          echo "Starting RustDesk using:"
+          echo "User:"
           echo "$MACOS_USERNAME"
 
-          sudo -u "$MACOS_USERNAME" -H \
-            env \
-            HOME="/Users/$MACOS_USERNAME" \
-            USER="$MACOS_USERNAME" \
-            LOGNAME="$MACOS_USERNAME" \
-            nohup "$RUSTDESK" \
-            >/tmp/rustdesk-abdulrahman.log 2>&1 &
+          echo ""
+          echo "UID:"
+          echo "$USER_UID"
+
+          echo ""
+          echo "Starting RustDesk inside user GUI session..."
+
+          sudo launchctl asuser "$USER_UID" \
+            sudo -u "$MACOS_USERNAME" \
+            open -n "/Applications/RustDesk.app"
 
           sleep 10
 
@@ -377,8 +378,20 @@ jobs:
           pgrep -fl RustDesk || true
 
           echo ""
-          echo "RustDesk owned by Abdulrahman:"
-          ps aux | grep "$MACOS_USERNAME" | grep RustDesk || true
+          echo "RustDesk ID:"
+
+          ID=$(
+            sudo -u "$MACOS_USERNAME" -H \
+              env \
+              HOME="/Users/$MACOS_USERNAME" \
+              USER="$MACOS_USERNAME" \
+              LOGNAME="$MACOS_USERNAME" \
+              "$RUSTDESK" \
+              --get-id \
+              2>/dev/null || true
+          )
+
+          echo "$ID"
 
           echo ""
           echo "RustDesk log:"
@@ -388,7 +401,7 @@ jobs:
 
 
       # =========================================================
-      # 8. START RUSTDESK WATCHDOG IN BACKGROUND
+      # 8. START RUSTDESK WATCHDOG
       # =========================================================
       - name: Start RustDesk Watchdog
         shell: bash
@@ -400,10 +413,21 @@ jobs:
 
           RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
           LOG="/tmp/rustdesk-watchdog.log"
+          OUTPUT="/tmp/rustdesk-watchdog-output.log"
+
+          USER_UID=$(id -u "$MACOS_USERNAME")
 
           echo "=========================================="
           echo " STARTING RUSTDESK WATCHDOG"
           echo "=========================================="
+
+          echo ""
+          echo "User:"
+          echo "$MACOS_USERNAME"
+
+          echo ""
+          echo "UID:"
+          echo "$USER_UID"
 
           (
             while true
@@ -411,41 +435,111 @@ jobs:
 
               if pgrep -x "RustDesk" >/dev/null 2>&1
               then
+
                 echo "[$(date)] RustDesk is RUNNING."
 
-              else
-                echo "[$(date)] RustDesk is NOT running!"
-                echo "[$(date)] Restarting RustDesk..."
+                CURRENT_ID=$(
+                  sudo -u "$MACOS_USERNAME" -H \
+                    env \
+                    HOME="/Users/$MACOS_USERNAME" \
+                    USER="$MACOS_USERNAME" \
+                    LOGNAME="$MACOS_USERNAME" \
+                    "$RUSTDESK" \
+                    --get-id \
+                    2>/dev/null || true
+                )
 
-                sudo -u "$MACOS_USERNAME" -H \
-                  env \
-                  HOME="/Users/$MACOS_USERNAME" \
-                  USER="$MACOS_USERNAME" \
-                  LOGNAME="$MACOS_USERNAME" \
-                  open -n "/Applications/RustDesk.app" \
-                  >>"$LOG" 2>&1 &
-
-                sleep 10
-
-                if pgrep -x "RustDesk" >/dev/null 2>&1
+                if [ -n "$CURRENT_ID" ]
                 then
-                  echo "[$(date)] SUCCESS: RustDesk restarted."
+                  echo "[$(date)] RustDesk ID: $CURRENT_ID"
                 else
-                  echo "[$(date)] ERROR: RustDesk failed to restart."
-                  echo "----- RustDesk log -----"
-                  tail -50 "$LOG" 2>/dev/null || true
+                  echo "[$(date)] RustDesk ID: unavailable."
                 fi
+
+              else
+
+                echo "[$(date)] RustDesk is NOT running!"
+                echo "[$(date)] Starting RustDesk..."
+
+                sudo launchctl asuser "$USER_UID" \
+                  sudo -u "$MACOS_USERNAME" \
+                  open -n "/Applications/RustDesk.app" \
+                  >>"$LOG" 2>&1 || true
+
+                echo "[$(date)] Waiting for RustDesk..."
+
+                STARTED=0
+
+                for i in {1..12}
+                do
+
+                  sleep 5
+
+                  if pgrep -x "RustDesk" >/dev/null 2>&1
+                  then
+                    STARTED=1
+                    break
+                  fi
+
+                done
+
+                if [ "$STARTED" -eq 1 ]
+                then
+
+                  echo "[$(date)] SUCCESS: RustDesk restarted."
+
+                  sleep 5
+
+                  NEW_ID=$(
+                    sudo -u "$MACOS_USERNAME" -H \
+                      env \
+                      HOME="/Users/$MACOS_USERNAME" \
+                      USER="$MACOS_USERNAME" \
+                      LOGNAME="$MACOS_USERNAME" \
+                      "$RUSTDESK" \
+                      --get-id \
+                      2>/dev/null || true
+                  )
+
+                  echo ""
+                  echo "=========================================="
+                  echo " RUSTDESK RESTARTED"
+                  echo "=========================================="
+
+                  if [ -n "$NEW_ID" ]
+                  then
+                    echo "RustDesk ID:"
+                    echo "$NEW_ID"
+                  else
+                    echo "WARNING: RustDesk restarted but ID was not returned."
+                  fi
+
+                  echo "=========================================="
+
+                else
+
+                  echo "[$(date)] ERROR: RustDesk failed to restart."
+
+                  echo ""
+                  echo "RustDesk launch log:"
+                  tail -50 "$LOG" 2>/dev/null || true
+
+                fi
+
               fi
+
+              echo ""
+              echo "------------------------------------------"
 
               sleep 30
 
             done
-          ) >/tmp/rustdesk-watchdog-output.log 2>&1 &
+
+          ) >"$OUTPUT" 2>&1 &
 
           WATCHDOG_PID=$!
 
           echo ""
-          echo "Watchdog started."
           echo "Watchdog PID:"
           echo "$WATCHDOG_PID"
 
@@ -453,10 +547,12 @@ jobs:
 
           if kill -0 "$WATCHDOG_PID" 2>/dev/null
           then
-            echo "SUCCESS: Watchdog is running in background."
+            echo ""
+            echo "SUCCESS: RustDesk Watchdog is running."
           else
+            echo ""
             echo "ERROR: Watchdog failed to start."
-            cat /tmp/rustdesk-watchdog-output.log || true
+            cat "$OUTPUT" || true
             exit 1
           fi
 
@@ -476,13 +572,11 @@ jobs:
           echo " OPENING SYSTEM SETTINGS"
           echo "=========================================="
 
-          sudo -u "$MACOS_USERNAME" -H \
-            env \
-            HOME="/Users/$MACOS_USERNAME" \
-            USER="$MACOS_USERNAME" \
-            LOGNAME="$MACOS_USERNAME" \
-            /usr/bin/open \
-            -a "System Settings" \
+          USER_UID=$(id -u "$MACOS_USERNAME")
+
+          sudo launchctl asuser "$USER_UID" \
+            sudo -u "$MACOS_USERNAME" \
+            open -a "System Settings" \
             2>&1 || true
 
           sleep 5
@@ -509,6 +603,8 @@ jobs:
           echo " FINAL CHECK"
           echo "=========================================="
 
+          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
+
           echo ""
           echo "Console user:"
           stat -f "%Su" /dev/console
@@ -530,12 +626,30 @@ jobs:
           id -Gn "$MACOS_USERNAME"
 
           echo ""
-          echo "RustDesk:"
+          echo "RustDesk processes:"
           pgrep -fl RustDesk || true
+
+          echo ""
+          echo "RustDesk ID:"
+
+          sudo -u "$MACOS_USERNAME" -H \
+            env \
+            HOME="/Users/$MACOS_USERNAME" \
+            USER="$MACOS_USERNAME" \
+            LOGNAME="$MACOS_USERNAME" \
+            "$RUSTDESK" \
+            --get-id \
+            2>/dev/null || true
 
           echo ""
           echo "Watchdog:"
           pgrep -fl "rustdesk-watchdog" || true
+
+          echo ""
+          echo "Watchdog output:"
+          tail -30 \
+            /tmp/rustdesk-watchdog-output.log \
+            2>/dev/null || true
 
 
       # =========================================================
@@ -557,14 +671,35 @@ jobs:
             stat -f "%Su" /dev/console \
               2>/dev/null || echo "unknown"
 
+            echo ""
             echo "Logged users:"
             who || true
 
+            echo ""
             echo "RustDesk:"
             pgrep -fl RustDesk || true
 
+            echo ""
+            echo "RustDesk ID:"
+
+            RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
+
+            "$RUSTDESK" \
+              --get-id \
+              2>/dev/null || true
+
+            echo ""
             echo "Watchdog:"
             pgrep -fl "rustdesk-watchdog" || true
+
+            echo ""
+            echo "Recent Watchdog output:"
+            tail -10 \
+              /tmp/rustdesk-watchdog-output.log \
+              2>/dev/null || true
+
+            echo ""
+            echo "------------------------------------------"
 
             sleep 300
           done
