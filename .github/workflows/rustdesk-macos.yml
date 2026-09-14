@@ -30,11 +30,201 @@ jobs:
           uname -m
 
           echo ""
+          echo "User:"
+          whoami
+
           echo "=========================================="
 
       # ==========================================
       # INSTALL RUSTDESK
       # ==========================================
+
+      - name: Install RustDesk
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "          INSTALLING RUSTDESK"
+          echo "=========================================="
+
+          brew update
+
+          echo "Installing RustDesk..."
+
+          brew install --cask rustdesk
+
+          echo ""
+          echo "Checking installation..."
+
+          if [ ! -d "/Applications/RustDesk.app" ]; then
+            echo "ERROR: RustDesk.app was not found."
+            exit 1
+          fi
+
+          echo "RustDesk installed successfully."
+
+          echo "=========================================="
+
+      # ==========================================
+      # START RUSTDESK
+      # ==========================================
+
+      - name: Start RustDesk
+        shell: bash
+        env:
+          RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
+        run: |
+          set -e
+
+          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
+
+          echo "=========================================="
+          echo "          STARTING RUSTDESK"
+          echo "=========================================="
+
+          if [ ! -f "$RUSTDESK" ]; then
+            echo "ERROR: RustDesk executable not found."
+            exit 1
+          fi
+
+          echo "RustDesk executable found."
+
+          # ------------------------------------------
+          # Start RustDesk in background
+          # ------------------------------------------
+
+          echo "Starting RustDesk in background..."
+
+          nohup "$RUSTDESK" >/tmp/rustdesk.log 2>&1 &
+
+          RUSTDESK_PID=$!
+
+          echo "RustDesk PID: $RUSTDESK_PID"
+
+          echo "Waiting for RustDesk..."
+          sleep 10
+
+          # ------------------------------------------
+          # Check process
+          # ------------------------------------------
+
+          echo ""
+          echo "Checking RustDesk process..."
+
+          if kill -0 "$RUSTDESK_PID" 2>/dev/null; then
+            echo "RustDesk process is running."
+          else
+            echo "RustDesk process stopped."
+
+            echo ""
+            echo "========== RustDesk Log =========="
+            cat /tmp/rustdesk.log || true
+            echo "=================================="
+
+            exit 1
+          fi
+
+          # ------------------------------------------
+          # Set permanent password
+          # ------------------------------------------
+
+          echo ""
+          echo "Setting permanent password..."
+
+          if [ -z "$RUSTDESK_PASSWORD" ]; then
+            echo "ERROR: RUSTDESK_PASSWORD secret is empty."
+            exit 1
+          fi
+
+          "$RUSTDESK" --password "$RUSTDESK_PASSWORD"
+
+          echo "Permanent password configured."
+
+          sleep 5
+
+          # ------------------------------------------
+          # Get RustDesk ID
+          # ------------------------------------------
+
+          echo ""
+          echo "Getting RustDesk ID..."
+
+          ID=$("$RUSTDESK" --get-id 2>/dev/null || true)
+
+          echo ""
+          echo "=========================================="
+          echo "          RUSTDESK CONNECTION"
+          echo "=========================================="
+
+          if [ -n "$ID" ]; then
+            echo "RustDesk ID: $ID"
+          else
+            echo "WARNING: RustDesk ID could not be retrieved."
+
+            echo ""
+            echo "RustDesk log:"
+            cat /tmp/rustdesk.log || true
+          fi
+
+          echo ""
+          echo "Permanent password: CONFIGURED"
+
+          echo "=========================================="
+
+      # ==========================================
+      # VERIFY RUSTDESK
+      # ==========================================
+
+      - name: Verify RustDesk
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo "          RUSTDESK STATUS"
+          echo "=========================================="
+
+          echo ""
+          echo "Processes:"
+
+          pgrep -fl RustDesk || true
+
+          echo ""
+          echo "Application:"
+
+          ls -ld /Applications/RustDesk.app
+
+          echo ""
+          echo "RustDesk log:"
+
+          tail -50 /tmp/rustdesk.log 2>/dev/null || true
+
+          echo ""
+          echo "=========================================="
+
+      # ==========================================
+      # KEEP RUNNER ALIVE
+      # ==========================================
+
+      - name: Keep Runner Alive
+        shell: bash
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "       macOS RUNNER IS NOW ONLINE"
+          echo "=========================================="
+          echo ""
+          echo "RustDesk is running."
+          echo "Permanent password is configured."
+          echo ""
+          echo "The GitHub Actions job will remain active."
+          echo ""
+          echo "=========================================="
+
+          while true
+          do
+            echo "[$(date)] macOS Runner is alive..."
+            sleep 300
+          done      # ==========================================
 
       - name: Install RustDesk
         shell: bash
