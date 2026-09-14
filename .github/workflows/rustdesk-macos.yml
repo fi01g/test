@@ -1,0 +1,79 @@
+name: macOS RustDesk Session
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rustdesk:
+    runs-on: macos-latest
+
+    timeout-minutes: 360
+
+    steps:
+      - name: Show macOS information
+        run: |
+          sw_vers
+          uname -m
+
+      - name: Install RustDesk
+        shell: bash
+        run: |
+          set -e
+
+          echo "Downloading RustDesk..."
+
+          if [[ "$(uname -m)" == "arm64" ]]; then
+            URL=$(curl -sL https://api.github.com/repos/rustdesk/rustdesk/releases/latest \
+              | grep '"browser_download_url"' \
+              | grep 'aarch64.dmg' \
+              | head -1 \
+              | cut -d '"' -f 4)
+          else
+            URL=$(curl -sL https://api.github.com/repos/rustdesk/rustdesk/releases/latest \
+              | grep '"browser_download_url"' \
+              | grep 'x86_64.dmg' \
+              | head -1 \
+              | cut -d '"' -f 4)
+          fi
+
+          echo "URL: $URL"
+
+          curl -L "$URL" -o /tmp/rustdesk.dmg
+
+          hdiutil attach /tmp/rustdesk.dmg \
+            -mountpoint /Volumes/RustDesk \
+            -nobrowse
+
+          sudo cp -R /Volumes/RustDesk/RustDesk.app /Applications/
+
+          hdiutil detach /Volumes/RustDesk
+
+          echo "RustDesk installed."
+
+      - name: Start RustDesk
+        shell: bash
+        run: |
+          open -a "/Applications/RustDesk.app"
+
+          sleep 10
+
+          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
+
+          echo "Getting RustDesk ID..."
+
+          ID=$("$RUSTDESK" --get-id || true)
+
+          echo "======================================"
+          echo "RustDesk ID: $ID"
+          echo "======================================"
+
+      - name: Keep runner alive
+        shell: bash
+        run: |
+          echo "macOS runner is running."
+          echo "Keep this job running while using the machine."
+
+          while true; do
+            echo "[$(date)] Runner alive..."
+            sleep 300
+          done
