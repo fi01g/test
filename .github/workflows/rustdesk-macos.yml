@@ -1,4 +1,4 @@
-name: macOS RustDesk - GUI Login Test
+name: macOS RustDesk - Abdulrahman GUI Test
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ jobs:
     steps:
 
       # =========================================================
-      # 1. معلومات الـ Runner
+      # 1. macOS Information
       # =========================================================
       - name: macOS Information
         shell: bash
@@ -22,6 +22,8 @@ jobs:
           echo " macOS Runner Information"
           echo "=========================================="
 
+          echo ""
+          echo "macOS:"
           sw_vers
 
           echo ""
@@ -42,7 +44,7 @@ jobs:
 
 
       # =========================================================
-      # 2. إنشاء Abdulrahman
+      # 2. Create Abdulrahman
       # =========================================================
       - name: Create macOS User
         shell: bash
@@ -72,15 +74,23 @@ jobs:
             exit 1
           fi
 
+          echo ""
+          echo "Target username:"
+          echo "$MACOS_USERNAME"
+
           if id "$MACOS_USERNAME" >/dev/null 2>&1; then
+            echo ""
             echo "User already exists."
           else
-            echo "Creating user: $MACOS_USERNAME"
+            echo ""
+            echo "Creating user..."
 
             sudo sysadminctl \
               -addUser "$MACOS_USERNAME" \
               -fullName "$MACOS_USERNAME" \
               -password "$MACOS_PASSWORD"
+
+            echo "User created."
           fi
 
           echo ""
@@ -96,9 +106,13 @@ jobs:
           echo "User information:"
           id "$MACOS_USERNAME"
 
+          echo ""
+          echo "Admin groups:"
+          id -Gn "$MACOS_USERNAME"
+
 
       # =========================================================
-      # 3. محاولة ضبط Auto Login
+      # 3. Configure Auto Login
       # =========================================================
       - name: Configure Auto Login
         shell: bash
@@ -118,7 +132,7 @@ jobs:
           stat -f "%Su" /dev/console
 
           echo ""
-          echo "Setting auto-login user to:"
+          echo "Setting auto-login user:"
           echo "$MACOS_USERNAME"
 
           sudo sysadminctl \
@@ -137,7 +151,7 @@ jobs:
 
 
       # =========================================================
-      # 4. اختبار أن الحساب نفسه يعمل
+      # 4. Verify Abdulrahman Account
       # =========================================================
       - name: Verify Abdulrahman Account
         shell: bash
@@ -148,16 +162,12 @@ jobs:
           set -e
 
           echo "=========================================="
-          echo " Verifying User"
+          echo " Verifying Abdulrahman Account"
           echo "=========================================="
 
           echo ""
           echo "Username:"
           sudo -u "$MACOS_USERNAME" whoami
-
-          echo ""
-          echo "Home:"
-          sudo -u "$MACOS_USERNAME" sh -c 'echo "$HOME"'
 
           echo ""
           echo "UID:"
@@ -168,12 +178,121 @@ jobs:
           id -Gn "$MACOS_USERNAME"
 
           echo ""
+          echo "Home directory:"
+
+          dscl . -read \
+            "/Users/$MACOS_USERNAME" \
+            NFSHomeDirectory
+
+          echo ""
+          echo "Testing HOME environment:"
+
+          sudo -u "$MACOS_USERNAME" -H sh -c '
+            echo "whoami=$(whoami)"
+            echo "HOME=$HOME"
+            echo "USER=$USER"
+            echo "LOGNAME=$LOGNAME"
+          '
+
+          echo ""
           echo "Current GUI console user:"
           stat -f "%Su" /dev/console
 
 
       # =========================================================
-      # 5. تثبيت RustDesk
+      # 5. TEST GUI SESSION AS ABDULRAHMAN
+      # =========================================================
+      - name: Test Abdulrahman GUI Session
+        shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " Testing Abdulrahman GUI Session"
+          echo "=========================================="
+
+          echo ""
+          echo "Current console user:"
+          stat -f "%Su" /dev/console
+
+          echo ""
+          echo "Current GUI sessions:"
+          who || true
+
+          echo ""
+          echo "User ID:"
+          id "$MACOS_USERNAME"
+
+          USER_UID=$(id -u "$MACOS_USERNAME")
+
+          echo ""
+          echo "Abdulrahman UID:"
+          echo "$USER_UID"
+
+          echo ""
+          echo "Home directory:"
+          dscl . -read \
+            "/Users/$MACOS_USERNAME" \
+            NFSHomeDirectory
+
+          echo ""
+          echo "=========================================="
+          echo " Testing Environment"
+          echo "=========================================="
+
+          sudo -u "$MACOS_USERNAME" -H sh -c '
+            echo "whoami=$(whoami)"
+            echo "id=$(id)"
+            echo "HOME=$HOME"
+            echo "USER=$USER"
+            echo "LOGNAME=$LOGNAME"
+          '
+
+          echo ""
+          echo "=========================================="
+          echo " Testing GUI-capable Process"
+          echo "=========================================="
+
+          echo ""
+          echo "Attempting to open System Settings as:"
+          echo "$MACOS_USERNAME"
+
+          sudo -u "$MACOS_USERNAME" -H \
+            env \
+            HOME="/Users/$MACOS_USERNAME" \
+            USER="$MACOS_USERNAME" \
+            LOGNAME="$MACOS_USERNAME" \
+            /usr/bin/open -a "System Settings" \
+            2>&1 || true
+
+          echo ""
+          echo "Waiting for System Settings..."
+          sleep 5
+
+          echo ""
+          echo "=========================================="
+          echo " Processes belonging to Abdulrahman"
+          echo "=========================================="
+
+          ps aux | grep "$MACOS_USERNAME" | grep -v grep || true
+
+          echo ""
+          echo "=========================================="
+          echo " Final Console User"
+          echo "=========================================="
+
+          stat -f "%Su" /dev/console
+
+          echo ""
+          echo "Logged in users:"
+          who || true
+
+
+      # =========================================================
+      # 6. Install RustDesk
       # =========================================================
       - name: Install RustDesk
         shell: bash
@@ -200,11 +319,13 @@ jobs:
             exit 1
           fi
 
+          echo ""
+          echo "RustDesk version:"
           "$RUSTDESK" --version || true
 
 
       # =========================================================
-      # 6. إعداد RustDesk Password
+      # 7. Configure RustDesk
       # =========================================================
       - name: Configure RustDesk
         shell: bash
@@ -228,19 +349,23 @@ jobs:
           echo ""
           echo "Getting RustDesk ID..."
 
-          ID=$("$RUSTDESK" --get-id 2>/dev/null || true)
+          ID=$(
+            "$RUSTDESK" --get-id 2>/dev/null || true
+          )
 
           echo "RustDesk ID: $ID"
 
           echo ""
           echo "Starting RustDesk server..."
 
-          "$RUSTDESK" --server >/tmp/rustdesk-server.log 2>&1 &
+          "$RUSTDESK" \
+            --server \
+            >/tmp/rustdesk-server.log 2>&1 &
 
           sleep 10
 
           echo ""
-          echo "Setting permanent password..."
+          echo "Setting permanent RustDesk password..."
 
           PASSWORD_OUTPUT=$(
             sudo "$RUSTDESK" \
@@ -248,18 +373,28 @@ jobs:
               2>&1
           )
 
+          echo ""
+          echo "Password command output:"
           echo "$PASSWORD_OUTPUT"
 
           if echo "$PASSWORD_OUTPUT" | grep -qi "done"; then
-            echo "SUCCESS: RustDesk password configured."
+            echo ""
+            echo "SUCCESS: Permanent password configured."
           else
+            echo ""
             echo "WARNING: RustDesk did not report success."
+
+            echo ""
+            echo "RustDesk server log:"
+            cat /tmp/rustdesk-server.log || true
           fi
 
           echo ""
           echo "Restarting RustDesk..."
 
-          pkill -f "/Applications/RustDesk.app/Contents/MacOS/RustDesk" || true
+          pkill -f \
+            "/Applications/RustDesk.app/Contents/MacOS/RustDesk" \
+            || true
 
           sleep 5
 
@@ -271,10 +406,14 @@ jobs:
           sleep 10
 
           if kill -0 "$RUSTDESK_PID" 2>/dev/null; then
+            echo ""
             echo "RustDesk is running."
           else
+            echo ""
             echo "RustDesk failed to start."
 
+            echo ""
+            echo "RustDesk log:"
             cat /tmp/rustdesk.log || true
 
             exit 1
@@ -286,15 +425,22 @@ jobs:
 
           echo ""
           echo "=========================================="
-          echo " RustDesk ID: $FINAL_ID"
-          echo " Password: CONFIGURED"
+          echo " RustDesk Ready"
           echo "=========================================="
 
+          echo ""
+          echo "RustDesk ID:"
+          echo "$FINAL_ID"
+
+          echo ""
+          echo "Permanent password:"
+          echo "CONFIGURED"
+
 
       # =========================================================
-      # 7. محاولة تسجيل الخروج من Anka
+      # 8. محاولة تشغيل RustDesk نفسه تحت Abdulrahman
       # =========================================================
-      - name: Attempt GUI Logout
+      - name: Test RustDesk As Abdulrahman
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
@@ -303,89 +449,92 @@ jobs:
           set -e
 
           echo "=========================================="
-          echo " Attempting GUI User Switch"
+          echo " Testing RustDesk As Abdulrahman"
           echo "=========================================="
 
+          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
+
           echo ""
-          echo "Console user BEFORE logout:"
+          echo "Current console user:"
           stat -f "%Su" /dev/console
 
           echo ""
-          echo "Logged in users BEFORE:"
-          who || true
+          echo "Current RustDesk processes:"
+          pgrep -fl RustDesk || true
 
           echo ""
-          echo "Target user:"
+          echo "Starting a RustDesk process as:"
           echo "$MACOS_USERNAME"
 
-          echo ""
-          echo "Attempting to terminate current GUI session..."
-
-          CURRENT_USER=$(stat -f "%Su" /dev/console)
-
-          if [ "$CURRENT_USER" != "root" ] && [ "$CURRENT_USER" != "_mbsetupuser" ]; then
-
-            echo "Current GUI user appears to be: $CURRENT_USER"
-
-            echo "Requesting logout..."
-
-            sudo launchctl bootout "user/$(id -u "$CURRENT_USER")" \
-              2>/tmp/logout-error.log || true
-
-          else
-
-            echo "Could not identify normal GUI user."
-
-          fi
-
-          echo ""
-          echo "Logout command finished."
-
-          cat /tmp/logout-error.log 2>/dev/null || true
-
-          echo ""
-          echo "Waiting for loginwindow..."
+          sudo -u "$MACOS_USERNAME" -H \
+            env \
+            HOME="/Users/$MACOS_USERNAME" \
+            USER="$MACOS_USERNAME" \
+            LOGNAME="$MACOS_USERNAME" \
+            nohup "$RUSTDESK" \
+            >/tmp/rustdesk-abdulrahman.log 2>&1 &
 
           sleep 10
-
-          echo ""
-          echo "Console user AFTER:"
-          stat -f "%Su" /dev/console || true
-
-          echo ""
-          echo "Logged in users AFTER:"
-          who || true
-
-
-      # =========================================================
-      # 8. النتيجة
-      # =========================================================
-      - name: Check Final GUI User
-        shell: bash
-        run: |
-          echo "=========================================="
-          echo " FINAL GUI CHECK"
-          echo "=========================================="
-
-          echo ""
-          echo "Console user:"
-          stat -f "%Su" /dev/console || true
-
-          echo ""
-          echo "Logged in users:"
-          who || true
 
           echo ""
           echo "RustDesk processes:"
           pgrep -fl RustDesk || true
 
           echo ""
-          echo "RustDesk log:"
-          tail -50 /tmp/rustdesk.log 2>/dev/null || true
+          echo "Processes owned by Abdulrahman:"
+          ps aux | grep "$MACOS_USERNAME" | grep RustDesk || true
+
+          echo ""
+          echo "RustDesk Abdulrahman log:"
+          tail -50 /tmp/rustdesk-abdulrahman.log \
+            2>/dev/null || true
+
+          echo ""
+          echo "Console user:"
+          stat -f "%Su" /dev/console
 
 
       # =========================================================
-      # 9. إبقاء الـRunner شغال
+      # 9. Final Status
+      # =========================================================
+      - name: Final Status
+        shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+
+        run: |
+          echo "=========================================="
+          echo " FINAL STATUS"
+          echo "=========================================="
+
+          echo ""
+          echo "Console user:"
+          stat -f "%Su" /dev/console
+
+          echo ""
+          echo "Logged in users:"
+          who || true
+
+          echo ""
+          echo "Actions user:"
+          whoami
+
+          echo ""
+          echo "Abdulrahman:"
+          id "$MACOS_USERNAME"
+
+          echo ""
+          echo "RustDesk processes:"
+          pgrep -fl RustDesk || true
+
+          echo ""
+          echo "RustDesk main log:"
+          tail -50 /tmp/rustdesk.log \
+            2>/dev/null || true
+
+
+      # =========================================================
+      # 10. Keep Runner Alive
       # =========================================================
       - name: Keep Runner Alive
         shell: bash
@@ -400,333 +549,18 @@ jobs:
 
           while true
           do
-            echo "[$(date)] Runner alive | Console user: $(stat -f "%Su" /dev/console 2>/dev/null || echo unknown)"
-            sleep 300
-          done
-      # ==========================================
-      # CREATE MACOS USER
-      # ==========================================
+            echo ""
+            echo "[$(date)] Runner alive"
 
-      - name: Create macOS User
-        shell: bash
-        env:
-          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
-        run: |
-          set -e
+            echo "Console user:"
+            stat -f "%Su" /dev/console \
+              2>/dev/null || echo "unknown"
 
-          echo "=========================================="
-          echo "          CREATING MACOS USER"
-          echo "=========================================="
+            echo "Logged in users:"
+            who || true
 
-          if [ -z "$MACOS_USERNAME" ]; then
-            echo "ERROR: MACOS_USERNAME secret is empty."
-            exit 1
-          fi
+            echo "RustDesk:"
+            pgrep -fl RustDesk || true
 
-          if [ -z "$MACOS_PASSWORD" ]; then
-            echo "ERROR: MACOS_PASSWORD secret is empty."
-            exit 1
-          fi
-
-          if [[ ! "$MACOS_USERNAME" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-            echo "ERROR: Invalid username."
-            exit 1
-          fi
-
-          if id "$MACOS_USERNAME" >/dev/null 2>&1; then
-            echo "User already exists."
-          else
-            echo "Creating user: $MACOS_USERNAME"
-
-            sudo sysadminctl \
-              -addUser "$MACOS_USERNAME" \
-              -fullName "$MACOS_USERNAME" \
-              -password "$MACOS_PASSWORD"
-
-            echo "User created."
-          fi
-
-          echo ""
-          echo "Adding user to Administrators..."
-
-          sudo dseditgroup \
-            -o edit \
-            -a "$MACOS_USERNAME" \
-            -t user \
-            admin
-
-          echo "Administrator privileges configured."
-
-          echo ""
-          echo "User information:"
-
-          id "$MACOS_USERNAME"
-
-          echo ""
-          echo "=========================================="
-
-      # ==========================================
-      # CONFIGURE AUTO LOGIN
-      # ==========================================
-
-      - name: Configure Auto Login
-        shell: bash
-        env:
-          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo "          CONFIGURING AUTO LOGIN"
-          echo "=========================================="
-
-          echo ""
-          echo "macOS version:"
-          sw_vers -productVersion
-
-          echo ""
-          echo "Current console user:"
-          stat -f "%Su" /dev/console
-
-          echo ""
-          echo "Configuring auto-login for:"
-          echo "$MACOS_USERNAME"
-
-          sudo sysadminctl \
-            -autologin set \
-            -userName "$MACOS_USERNAME" \
-            -password "$MACOS_PASSWORD"
-
-          echo ""
-          echo "Auto-login configuration result:"
-
-          sudo sysadminctl -autologin status || true
-
-          echo ""
-          echo "=========================================="
-
-      # ==========================================
-      # TEST USER
-      # ==========================================
-
-      - name: Test New User
-        shell: bash
-        env:
-          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo "          TESTING NEW USER"
-          echo "=========================================="
-
-          echo ""
-          echo "User:"
-          sudo -u "$MACOS_USERNAME" whoami
-
-          echo ""
-          echo "Home:"
-          sudo -u "$MACOS_USERNAME" sh -c 'echo "$HOME"'
-
-          echo ""
-          echo "UID:"
-          id "$MACOS_USERNAME"
-
-          echo ""
-          echo "Console user BEFORE restart:"
-          stat -f "%Su" /dev/console
-
-          echo ""
-          echo "=========================================="
-
-      # ==========================================
-      # INSTALL RUSTDESK
-      # ==========================================
-
-      - name: Install RustDesk
-        shell: bash
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo "          INSTALLING RUSTDESK"
-          echo "=========================================="
-
-          brew update
-
-          brew install --cask rustdesk
-
-          if [ ! -d "/Applications/RustDesk.app" ]; then
-            echo "ERROR: RustDesk.app was not found."
-            exit 1
-          fi
-
-          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
-
-          if [ ! -f "$RUSTDESK" ]; then
-            echo "ERROR: RustDesk executable was not found."
-            exit 1
-          fi
-
-          echo "RustDesk installed successfully."
-
-          echo ""
-          echo "RustDesk version:"
-          "$RUSTDESK" --version || true
-
-          echo "=========================================="
-
-      # ==========================================
-      # CONFIGURE RUSTDESK
-      # ==========================================
-
-      - name: Configure RustDesk
-        shell: bash
-        env:
-          RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
-        run: |
-          set -e
-
-          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
-
-          echo "=========================================="
-          echo "          CONFIGURING RUSTDESK"
-          echo "=========================================="
-
-          if [ -z "$RUSTDESK_PASSWORD" ]; then
-            echo "ERROR: RUSTDESK_PASSWORD secret is empty."
-            exit 1
-          fi
-
-          echo ""
-          echo "Getting RustDesk ID..."
-
-          ID=$("$RUSTDESK" --get-id 2>/dev/null || true)
-
-          echo "RustDesk ID: $ID"
-
-          echo ""
-          echo "Starting RustDesk server..."
-
-          "$RUSTDESK" --server >/tmp/rustdesk-server.log 2>&1 &
-
-          sleep 10
-
-          echo ""
-          echo "Setting permanent password..."
-
-          PASSWORD_OUTPUT=$(sudo "$RUSTDESK" --password "$RUSTDESK_PASSWORD" 2>&1)
-
-          echo "Password command output:"
-          echo "$PASSWORD_OUTPUT"
-
-          if echo "$PASSWORD_OUTPUT" | grep -qi "done"; then
-            echo "SUCCESS: RustDesk password configured."
-          else
-            echo "WARNING: RustDesk did not report success."
-            cat /tmp/rustdesk-server.log || true
-          fi
-
-          sleep 5
-
-          echo ""
-          echo "Restarting RustDesk..."
-
-          pkill -f "/Applications/RustDesk.app/Contents/MacOS/RustDesk" || true
-
-          sleep 5
-
-          nohup "$RUSTDESK" >/tmp/rustdesk.log 2>&1 &
-
-          sleep 10
-
-          FINAL_ID=$("$RUSTDESK" --get-id 2>/dev/null || true)
-
-          echo ""
-          echo "=========================================="
-          echo "          RUSTDESK CONNECTION"
-          echo "=========================================="
-          echo ""
-          echo "RustDesk ID: $FINAL_ID"
-          echo ""
-          echo "Permanent password: CONFIGURED"
-          echo ""
-          echo "=========================================="
-
-      # ==========================================
-      # CHECK CONSOLE USER
-      # ==========================================
-
-      - name: Check Console User
-        shell: bash
-        run: |
-          echo "=========================================="
-          echo "          CONSOLE SESSION"
-          echo "=========================================="
-
-          echo ""
-          echo "Current console user:"
-
-          stat -f "%Su" /dev/console
-
-          echo ""
-          echo "Logged in users:"
-
-          who
-
-          echo ""
-          echo "=========================================="
-
-      # ==========================================
-      # VERIFY RUSTDESK
-      # ==========================================
-
-      - name: Verify RustDesk
-        shell: bash
-        run: |
-          echo "=========================================="
-          echo "          RUSTDESK STATUS"
-          echo "=========================================="
-
-          pgrep -fl RustDesk || true
-
-          echo ""
-          echo "RustDesk application:"
-
-          ls -ld /Applications/RustDesk.app
-
-          echo ""
-          echo "RustDesk log:"
-
-          tail -50 /tmp/rustdesk.log 2>/dev/null || true
-
-          echo ""
-          echo "=========================================="
-
-      # ==========================================
-      # KEEP RUNNER ALIVE
-      # ==========================================
-
-      - name: Keep Runner Alive
-        shell: bash
-        run: |
-          echo ""
-          echo "=========================================="
-          echo "       MACOS RUNNER IS NOW ONLINE"
-          echo "=========================================="
-          echo ""
-          echo "Created user: $MACOS_USERNAME"
-          echo "Auto-login configuration attempted."
-          echo "RustDesk is running."
-          echo ""
-          echo "The GitHub Actions job will remain active."
-          echo ""
-          echo "=========================================="
-
-          while true
-          do
-            echo "[$(date)] macOS Runner is alive..."
             sleep 300
           done
