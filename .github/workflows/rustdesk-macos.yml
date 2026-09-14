@@ -388,9 +388,9 @@ jobs:
 
 
       # =========================================================
-      # 8. RUSTDESK WATCHDOG
+      # 8. START RUSTDESK WATCHDOG IN BACKGROUND
       # =========================================================
-      - name: RustDesk Watchdog
+      - name: Start RustDesk Watchdog
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
@@ -402,60 +402,63 @@ jobs:
           LOG="/tmp/rustdesk-watchdog.log"
 
           echo "=========================================="
-          echo " RUSTDESK WATCHDOG"
+          echo " STARTING RUSTDESK WATCHDOG"
           echo "=========================================="
 
-          echo ""
-          echo "RustDesk:"
-          echo "$RUSTDESK"
-
-          echo ""
-          echo "User:"
-          echo "$MACOS_USERNAME"
-
-          echo ""
-          echo "Starting watchdog..."
-
-          while true
-          do
-
-            if pgrep -x "RustDesk" >/dev/null 2>&1
-            then
-              echo "[$(date)] RustDesk is RUNNING."
-            else
-              echo "[$(date)] RustDesk is NOT running!"
-              echo "[$(date)] Restarting RustDesk..."
-
-              sudo -u "$MACOS_USERNAME" -H \
-                env \
-                HOME="/Users/$MACOS_USERNAME" \
-                USER="$MACOS_USERNAME" \
-                LOGNAME="$MACOS_USERNAME" \
-                nohup "$RUSTDESK" \
-                >>"$LOG" 2>&1 &
-
-              sleep 10
+          (
+            while true
+            do
 
               if pgrep -x "RustDesk" >/dev/null 2>&1
               then
-                echo "[$(date)] SUCCESS: RustDesk restarted."
+                echo "[$(date)] RustDesk is RUNNING."
+
               else
-                echo "[$(date)] ERROR: RustDesk failed to restart."
-                echo "----- RustDesk log -----"
-                tail -50 "$LOG" 2>/dev/null || true
+                echo "[$(date)] RustDesk is NOT running!"
+                echo "[$(date)] Restarting RustDesk..."
+
+                sudo -u "$MACOS_USERNAME" -H \
+                  env \
+                  HOME="/Users/$MACOS_USERNAME" \
+                  USER="$MACOS_USERNAME" \
+                  LOGNAME="$MACOS_USERNAME" \
+                  open -n "/Applications/RustDesk.app" \
+                  >>"$LOG" 2>&1 &
+
+                sleep 10
+
+                if pgrep -x "RustDesk" >/dev/null 2>&1
+                then
+                  echo "[$(date)] SUCCESS: RustDesk restarted."
+                else
+                  echo "[$(date)] ERROR: RustDesk failed to restart."
+                  echo "----- RustDesk log -----"
+                  tail -50 "$LOG" 2>/dev/null || true
+                fi
               fi
-            fi
 
-            echo ""
-            echo "RustDesk processes:"
-            pgrep -fl RustDesk || true
+              sleep 30
 
-            echo ""
-            echo "------------------------------------------"
+            done
+          ) >/tmp/rustdesk-watchdog-output.log 2>&1 &
 
-            sleep 30
+          WATCHDOG_PID=$!
 
-          done
+          echo ""
+          echo "Watchdog started."
+          echo "Watchdog PID:"
+          echo "$WATCHDOG_PID"
+
+          sleep 2
+
+          if kill -0 "$WATCHDOG_PID" 2>/dev/null
+          then
+            echo "SUCCESS: Watchdog is running in background."
+          else
+            echo "ERROR: Watchdog failed to start."
+            cat /tmp/rustdesk-watchdog-output.log || true
+            exit 1
+          fi
 
 
       # =========================================================
@@ -530,6 +533,10 @@ jobs:
           echo "RustDesk:"
           pgrep -fl RustDesk || true
 
+          echo ""
+          echo "Watchdog:"
+          pgrep -fl "rustdesk-watchdog" || true
+
 
       # =========================================================
       # 11. KEEP RUNNER ALIVE
@@ -555,6 +562,9 @@ jobs:
 
             echo "RustDesk:"
             pgrep -fl RustDesk || true
+
+            echo "Watchdog:"
+            pgrep -fl "rustdesk-watchdog" || true
 
             sleep 300
           done
