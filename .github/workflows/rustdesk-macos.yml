@@ -1,4 +1,4 @@
-name: macOS RustDesk - Abdulrahman
+name: macOS - RustDesk + NoMachine
 
 on:
   workflow_dispatch:
@@ -10,9 +10,9 @@ jobs:
 
     steps:
 
-      # =========================================================
-      # 1. SYSTEM INFORMATION
-      # =========================================================
+      # ==========================================
+      # 1. SYSTEM INFO
+      # ==========================================
       - name: System Information
         shell: bash
         run: |
@@ -22,10 +22,7 @@ jobs:
           echo " SYSTEM INFORMATION"
           echo "=========================================="
 
-          echo ""
-          echo "macOS:"
           sw_vers
-
           echo ""
           echo "Architecture:"
           uname -m
@@ -43,20 +40,19 @@ jobs:
           who || true
 
 
-      # =========================================================
+      # ==========================================
       # 2. CREATE ABDULRAHMAN
-      # =========================================================
+      # ==========================================
       - name: Create Abdulrahman
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
           MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
-
         run: |
           set -e
 
           echo "=========================================="
-          echo " CREATING ABDULRAHMAN"
+          echo " CREATING MACOS USER"
           echo "=========================================="
 
           if [ -z "$MACOS_USERNAME" ]; then
@@ -69,23 +65,9 @@ jobs:
             exit 1
           fi
 
-          if [[ ! "$MACOS_USERNAME" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-            echo "ERROR: Invalid username."
-            exit 1
-          fi
-
-          echo ""
-          echo "Username:"
-          echo "$MACOS_USERNAME"
-
           if id "$MACOS_USERNAME" >/dev/null 2>&1; then
-
-            echo ""
             echo "User already exists."
-
           else
-
-            echo ""
             echo "Creating user..."
 
             sudo sysadminctl \
@@ -94,11 +76,10 @@ jobs:
               -password "$MACOS_PASSWORD"
 
             echo "User created."
-
           fi
 
           echo ""
-          echo "Adding Administrator privileges..."
+          echo "Adding administrator privileges..."
 
           sudo dseditgroup \
             -o edit \
@@ -107,7 +88,7 @@ jobs:
             admin
 
           echo ""
-          echo "User ID:"
+          echo "User information:"
           id "$MACOS_USERNAME"
 
           echo ""
@@ -115,23 +96,22 @@ jobs:
           id -Gn "$MACOS_USERNAME"
 
 
-      # =========================================================
-      # 3. VERIFY PASSWORD + ADMIN
-      # =========================================================
-      - name: Verify Abdulrahman
+      # ==========================================
+      # 3. VERIFY USER
+      # ==========================================
+      - name: Verify User
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-
         run: |
           set -e
 
           echo "=========================================="
-          echo " VERIFYING ABDULRAHMAN"
+          echo " VERIFYING USER"
           echo "=========================================="
 
           echo ""
-          echo "whoami:"
+          echo "Username:"
           sudo -u "$MACOS_USERNAME" whoami
 
           echo ""
@@ -148,78 +128,168 @@ jobs:
             "/Users/$MACOS_USERNAME" \
             NFSHomeDirectory
 
-          echo ""
-          echo "Checking Administrator membership..."
 
-          ADMIN_CHECK=$(
-            dseditgroup \
-              -o checkmember \
-              -m "$MACOS_USERNAME" \
-              admin
-          )
-
-          echo "$ADMIN_CHECK"
-
-          if echo "$ADMIN_CHECK" | grep -qi "yes"; then
-            echo ""
-            echo "SUCCESS: Abdulrahman is an Administrator."
-          else
-            echo ""
-            echo "ERROR: Abdulrahman is NOT an Administrator."
-            exit 1
-          fi
-
-
-      # =========================================================
-      # 4. SET AUTO LOGIN
-      # =========================================================
-      - name: Configure Abdulrahman Auto Login
+      # ==========================================
+      # 4. INSTALL NOMACHINE
+      # ==========================================
+      - name: Install NoMachine
         shell: bash
-        env:
-          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
-
         run: |
           set -e
 
           echo "=========================================="
-          echo " CONFIGURING AUTO LOGIN"
+          echo " INSTALLING NOMACHINE"
+          echo "=========================================="
+
+          ARCH="$(uname -m)"
+
+          echo ""
+          echo "Architecture:"
+          echo "$ARCH"
+
+          if [ "$ARCH" = "arm64" ]; then
+            NOMACHINE_URL="https://download.nomachine.com/download/8.18/MacOSX/nomachine_8.18.4_1_arm64.dmg"
+          else
+            NOMACHINE_URL="https://download.nomachine.com/download/8.18/MacOSX/nomachine_8.18.4_1_x86_64.dmg"
+          fi
+
+          echo ""
+          echo "Downloading NoMachine..."
+
+          curl -L \
+            --fail \
+            --retry 3 \
+            "$NOMACHINE_URL" \
+            -o /tmp/nomachine.dmg
+
+          echo ""
+          echo "Mounting NoMachine DMG..."
+
+          MOUNT_POINT=$(
+            hdiutil attach \
+              /tmp/nomachine.dmg \
+              -nobrowse \
+              | awk '/Volumes/ {print substr($0,index($0,$3))}'
+          )
+
+          echo ""
+          echo "Mounted at:"
+          echo "$MOUNT_POINT"
+
+          echo ""
+          echo "DMG contents:"
+          ls -la "$MOUNT_POINT"
+
+          echo ""
+          echo "Installing NoMachine..."
+
+          INSTALLER="$MOUNT_POINT/NoMachine.app"
+
+          if [ -d "$INSTALLER" ]; then
+            sudo cp -R \
+              "$INSTALLER" \
+              /Applications/NoMachine.app
+          else
+            echo "ERROR: NoMachine.app not found."
+            hdiutil detach "$MOUNT_POINT" || true
+            exit 1
+          fi
+
+          echo ""
+          echo "Unmounting..."
+
+          hdiutil detach "$MOUNT_POINT" || true
+
+          echo ""
+          echo "NoMachine installed."
+
+          ls -la /Applications/NoMachine.app
+
+
+      # ==========================================
+      # 5. START NOMACHINE
+      # ==========================================
+      - name: Start NoMachine
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " STARTING NOMACHINE"
           echo "=========================================="
 
           echo ""
-          echo "Current console user:"
-          stat -f "%Su" /dev/console
+          echo "Searching for NoMachine server..."
+
+          find /Applications/NoMachine.app \
+            -maxdepth 5 \
+            -type f \
+            \( \
+              -name "nxserver" \
+              -o \
+              -name "nxnode" \
+            \) \
+            2>/dev/null || true
 
           echo ""
-          echo "Target:"
-          echo "$MACOS_USERNAME"
+          echo "Starting NoMachine application..."
 
-          sudo sysadminctl \
-            -autologin set \
-            -userName "$MACOS_USERNAME" \
-            -password "$MACOS_PASSWORD" \
+          sudo open -a "/Applications/NoMachine.app" || true
+
+          sleep 10
+
+          echo ""
+          echo "NoMachine processes:"
+
+          ps aux | grep -i nomachine | grep -v grep || true
+
+          echo ""
+          echo "Listening ports:"
+
+          sudo lsof -nP -iTCP -sTCP:LISTEN \
+            2>/dev/null \
+            | grep -Ei "nx|4000|nomachine" \
+            || true
+
+
+      # ==========================================
+      # 6. NETWORK INFORMATION
+      # ==========================================
+      - name: Network Information
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " NETWORK INFORMATION"
+          echo "=========================================="
+
+          echo ""
+          echo "Hostname:"
+          hostname
+
+          echo ""
+          echo "Local IP addresses:"
+
+          ifconfig \
+            | grep "inet " \
+            | grep -v "127.0.0.1" \
             || true
 
           echo ""
-          echo "Auto-login status:"
+          echo "Listening TCP ports:"
 
-          sudo sysadminctl \
-            -autologin status \
+          sudo lsof \
+            -nP \
+            -iTCP \
+            -sTCP:LISTEN \
+            2>/dev/null \
             || true
 
-          echo ""
-          echo "Current console user:"
-          stat -f "%Su" /dev/console
 
-          echo ""
-          echo "IMPORTANT:"
-          echo "Auto-login applies to a future login."
-          echo "It does not replace the current GUI session."
-
-
-      # =========================================================
-      # 5. INSTALL RUSTDESK
-      # =========================================================
+      # ==========================================
+      # 7. INSTALL RUSTDESK
+      # ==========================================
       - name: Install RustDesk
         shell: bash
         run: |
@@ -242,17 +312,17 @@ jobs:
 
           echo ""
           echo "RustDesk version:"
+
           "$RUSTDESK" --version || true
 
 
-      # =========================================================
-      # 6. CONFIGURE RUSTDESK
-      # =========================================================
+      # ==========================================
+      # 8. CONFIGURE RUSTDESK
+      # ==========================================
       - name: Configure RustDesk
         shell: bash
         env:
           RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
-
         run: |
           set -e
 
@@ -268,17 +338,6 @@ jobs:
           fi
 
           echo ""
-          echo "RustDesk ID:"
-
-          ID=$(
-            "$RUSTDESK" \
-              --get-id \
-              2>/dev/null || true
-          )
-
-          echo "$ID"
-
-          echo ""
           echo "Starting RustDesk server..."
 
           "$RUSTDESK" \
@@ -288,24 +347,25 @@ jobs:
           sleep 10
 
           echo ""
-          echo "Setting permanent password..."
+          echo "RustDesk ID:"
 
-          PASSWORD_OUTPUT=$(
-            sudo "$RUSTDESK" \
-              --password "$RUSTDESK_PASSWORD" \
-              2>&1
+          ID=$(
+            "$RUSTDESK" \
+              --get-id \
+              2>/dev/null \
+              || true
           )
 
-          echo "$PASSWORD_OUTPUT"
+          echo "$ID"
 
-          if echo "$PASSWORD_OUTPUT" | grep -qi "done"; then
-            echo ""
-            echo "SUCCESS: RustDesk password configured."
-          else
-            echo ""
-            echo "WARNING: RustDesk did not report Done."
-            cat /tmp/rustdesk-server.log || true
-          fi
+          echo ""
+          echo "Setting permanent password..."
+
+          "$RUSTDESK" \
+            --password "$RUSTDESK_PASSWORD" \
+            2>&1 || true
+
+          sleep 5
 
           echo ""
           echo "Restarting RustDesk..."
@@ -324,7 +384,8 @@ jobs:
           FINAL_ID=$(
             "$RUSTDESK" \
               --get-id \
-              2>/dev/null || true
+              2>/dev/null \
+              || true
           )
 
           echo ""
@@ -336,138 +397,109 @@ jobs:
           echo "RustDesk ID:"
           echo "$FINAL_ID"
 
+          echo ""
+          echo "RustDesk process:"
 
-      # =========================================================
-      # 7. START RUSTDESK AS ABDULRAHMAN
-      # =========================================================
+          pgrep -fl RustDesk || true
+
+
+      # ==========================================
+      # 9. START RUSTDESK AS ABDULRAHMAN
+      # ==========================================
       - name: Start RustDesk As Abdulrahman
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-
         run: |
           set -e
 
           echo "=========================================="
-          echo " STARTING RUSTDESK AS ABDULRAHMAN"
+          echo " STARTING RUSTDESK AS USER"
           echo "=========================================="
 
           RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
 
           echo ""
-          echo "Console user:"
-          stat -f "%Su" /dev/console
-
-          echo ""
-          echo "Starting RustDesk using:"
+          echo "Starting as:"
           echo "$MACOS_USERNAME"
 
-          sudo -u "$MACOS_USERNAME" -H \
+          sudo -u "$MACOS_USERNAME" \
+            -H \
             env \
             HOME="/Users/$MACOS_USERNAME" \
             USER="$MACOS_USERNAME" \
             LOGNAME="$MACOS_USERNAME" \
             nohup "$RUSTDESK" \
-            >/tmp/rustdesk-abdulrahman.log 2>&1 &
+            >/tmp/rustdesk-user.log 2>&1 &
 
           sleep 10
 
           echo ""
           echo "RustDesk processes:"
+
           pgrep -fl RustDesk || true
 
-          echo ""
-          echo "RustDesk owned by Abdulrahman:"
-          ps aux | grep "$MACOS_USERNAME" | grep RustDesk || true
 
-          echo ""
-          echo "RustDesk log:"
-          tail -50 \
-            /tmp/rustdesk-abdulrahman.log \
-            2>/dev/null || true
-
-
-      # =========================================================
-      # 8. OPEN SYSTEM SETTINGS AS ABDULRAHMAN
-      # =========================================================
-      - name: Open System Settings As Abdulrahman
+      # ==========================================
+      # 10. FINAL STATUS
+      # ==========================================
+      - name: Final Status
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-
         run: |
-          set -e
-
           echo "=========================================="
-          echo " OPENING SYSTEM SETTINGS"
+          echo " FINAL STATUS"
           echo "=========================================="
 
-          sudo -u "$MACOS_USERNAME" -H \
-            env \
-            HOME="/Users/$MACOS_USERNAME" \
-            USER="$MACOS_USERNAME" \
-            LOGNAME="$MACOS_USERNAME" \
-            /usr/bin/open \
-            -a "System Settings" \
-            2>&1 || true
+          echo ""
+          echo "macOS:"
+          sw_vers
 
-          sleep 5
+          echo ""
+          echo "Architecture:"
+          uname -m
 
           echo ""
           echo "Console user:"
           stat -f "%Su" /dev/console
 
           echo ""
-          echo "GUI sessions:"
-          who || true
-
-
-      # =========================================================
-      # 9. FINAL CHECK
-      # =========================================================
-      - name: Final Check
-        shell: bash
-        env:
-          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-
-        run: |
-          echo "=========================================="
-          echo " FINAL CHECK"
-          echo "=========================================="
-
-          echo ""
-          echo "Console user:"
-          stat -f "%Su" /dev/console
-
-          echo ""
-          echo "Logged users:"
-          who || true
-
-          echo ""
-          echo "Current Actions user:"
-          whoami
-
-          echo ""
-          echo "Abdulrahman:"
+          echo "Created user:"
           id "$MACOS_USERNAME"
-
-          echo ""
-          echo "Abdulrahman groups:"
-          id -Gn "$MACOS_USERNAME"
 
           echo ""
           echo "RustDesk:"
           pgrep -fl RustDesk || true
 
+          echo ""
+          echo "NoMachine:"
+          ps aux | grep -i nomachine | grep -v grep || true
 
-      # =========================================================
-      # 10. KEEP RUNNER ALIVE
-      # =========================================================
+          echo ""
+          echo "Listening ports:"
+          sudo lsof \
+            -nP \
+            -iTCP \
+            -sTCP:LISTEN \
+            2>/dev/null \
+            | grep -E "4000|nx|RustDesk" \
+            || true
+
+          echo ""
+          echo "=========================================="
+          echo " REMOTE ACCESS SERVICES STARTED"
+          echo "=========================================="
+
+
+      # ==========================================
+      # 11. KEEP RUNNER ALIVE
+      # ==========================================
       - name: Keep Runner Alive
         shell: bash
         run: |
           echo "=========================================="
-          echo " RUNNER IS ONLINE"
+          echo " MACOS RUNNER ONLINE"
           echo "=========================================="
 
           while true
@@ -475,15 +507,31 @@ jobs:
             echo ""
             echo "[$(date)] Runner alive"
 
+            echo ""
             echo "Console user:"
             stat -f "%Su" /dev/console \
-              2>/dev/null || echo "unknown"
+              2>/dev/null || true
 
-            echo "Logged users:"
-            who || true
-
+            echo ""
             echo "RustDesk:"
             pgrep -fl RustDesk || true
+
+            echo ""
+            echo "NoMachine:"
+            ps aux \
+              | grep -i nomachine \
+              | grep -v grep \
+              || true
+
+            echo ""
+            echo "Listening ports:"
+            sudo lsof \
+              -nP \
+              -iTCP \
+              -sTCP:LISTEN \
+              2>/dev/null \
+              | grep -E "4000|nx|RustDesk" \
+              || true
 
             sleep 300
           done
