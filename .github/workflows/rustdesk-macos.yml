@@ -1,4 +1,4 @@
-name: macOS RustDesk - User & Runner Password
+name: macOS RustDesk - Abdulrahman & Runner
 
 on:
   workflow_dispatch:
@@ -79,10 +79,8 @@ jobs:
           echo "$MACOS_USERNAME"
 
           if id "$MACOS_USERNAME" >/dev/null 2>&1; then
-            echo ""
             echo "User already exists."
           else
-            echo ""
             echo "Creating user..."
 
             sudo sysadminctl \
@@ -146,7 +144,7 @@ jobs:
           sudo sysadminctl -autologin status || true
 
           echo ""
-          echo "Console user AFTER configuration:"
+          echo "Console user AFTER:"
           stat -f "%Su" /dev/console
 
 
@@ -179,7 +177,6 @@ jobs:
 
           echo ""
           echo "Home directory:"
-
           dscl . -read \
             "/Users/$MACOS_USERNAME" \
             NFSHomeDirectory
@@ -227,12 +224,6 @@ jobs:
           id -u "$MACOS_USERNAME"
 
           echo ""
-          echo "Home directory:"
-          dscl . -read \
-            "/Users/$MACOS_USERNAME" \
-            NFSHomeDirectory
-
-          echo ""
           echo "Testing environment as Abdulrahman:"
 
           sudo -u "$MACOS_USERNAME" -H sh -c '
@@ -254,8 +245,6 @@ jobs:
             /usr/bin/open -a "System Settings" \
             2>&1 || true
 
-          echo ""
-          echo "Waiting..."
           sleep 5
 
           echo ""
@@ -299,9 +288,6 @@ jobs:
             echo "ERROR: RustDesk executable was not found."
             exit 1
           fi
-
-          echo ""
-          echo "RustDesk version:"
 
           "$RUSTDESK" --version || true
 
@@ -355,17 +341,12 @@ jobs:
               2>&1
           )
 
-          echo ""
-          echo "Password command output:"
           echo "$PASSWORD_OUTPUT"
 
           if echo "$PASSWORD_OUTPUT" | grep -qi "done"; then
-            echo ""
             echo "SUCCESS: Permanent password configured."
           else
-            echo ""
             echo "WARNING: RustDesk did not report success."
-
             cat /tmp/rustdesk-server.log || true
           fi
 
@@ -386,14 +367,10 @@ jobs:
           sleep 10
 
           if kill -0 "$RUSTDESK_PID" 2>/dev/null; then
-            echo ""
             echo "RustDesk is running."
           else
-            echo ""
             echo "RustDesk failed to start."
-
             cat /tmp/rustdesk.log || true
-
             exit 1
           fi
 
@@ -481,6 +458,8 @@ jobs:
       - name: Change Runner Password
         shell: bash
         env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
           RUNNER_PASSWORD: ${{ secrets.RUNNER_PASSWORD }}
 
         run: |
@@ -490,8 +469,18 @@ jobs:
           echo " Changing Runner Password"
           echo "=========================================="
 
+          if [ -z "$MACOS_USERNAME" ]; then
+            echo "ERROR: MACOS_USERNAME is empty."
+            exit 1
+          fi
+
+          if [ -z "$MACOS_PASSWORD" ]; then
+            echo "ERROR: MACOS_PASSWORD is empty."
+            exit 1
+          fi
+
           if [ -z "$RUNNER_PASSWORD" ]; then
-            echo "ERROR: RUNNER_PASSWORD secret is empty."
+            echo "ERROR: RUNNER_PASSWORD is empty."
             exit 1
           fi
 
@@ -500,36 +489,37 @@ jobs:
           stat -f "%Su" /dev/console
 
           echo ""
-          echo "Checking runner account..."
+          echo "Checking accounts..."
 
-          if ! id runner >/dev/null 2>&1; then
-            echo "ERROR: runner account does not exist."
-            exit 1
-          fi
+          echo "Admin account:"
+          id "$MACOS_USERNAME"
 
           echo ""
-          echo "Runner UID:"
-          id -u runner
+          echo "Target account:"
+          id runner
 
           echo ""
-          echo "Changing password for runner..."
+          echo "Resetting runner password using"
+          echo "the Abdulrahman administrator account..."
 
-          sudo dscl . \
-            -passwd \
-            "/Users/runner" \
-            "$RUNNER_PASSWORD"
+          sudo sysadminctl \
+            -adminUser "$MACOS_USERNAME" \
+            -adminPassword "$MACOS_PASSWORD" \
+            -resetPasswordFor runner \
+            -newPassword "$RUNNER_PASSWORD"
 
           echo ""
-          echo "Password change command completed."
+          echo "=========================================="
+          echo " Runner Password Reset Completed"
+          echo "=========================================="
 
           echo ""
           echo "Runner account:"
           id runner
 
           echo ""
-          echo "NOTE:"
-          echo "The new password is stored only in the"
-          echo "RUNNER_PASSWORD GitHub Secret."
+          echo "The new runner password is stored"
+          echo "in GitHub Secret: RUNNER_PASSWORD"
 
 
       # =========================================================
@@ -570,7 +560,7 @@ jobs:
           pgrep -fl RustDesk || true
 
           echo ""
-          echo "RustDesk main log:"
+          echo "RustDesk log:"
           tail -50 /tmp/rustdesk.log \
             2>/dev/null || true
 
