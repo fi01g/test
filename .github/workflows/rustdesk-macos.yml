@@ -1,4 +1,4 @@
-name: macOS - Abdulrahman + RustDesk
+name: macOS RustDesk - Abdulrahman
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ jobs:
     steps:
 
       # =========================================================
-      # 1. معلومات النظام
+      # 1. SYSTEM INFORMATION
       # =========================================================
       - name: System Information
         shell: bash
@@ -19,7 +19,7 @@ jobs:
           set -e
 
           echo "=========================================="
-          echo " macOS SYSTEM INFORMATION"
+          echo " SYSTEM INFORMATION"
           echo "=========================================="
 
           echo ""
@@ -31,7 +31,7 @@ jobs:
           uname -m
 
           echo ""
-          echo "Current process user:"
+          echo "Actions user:"
           whoami
 
           echo ""
@@ -39,14 +39,14 @@ jobs:
           stat -f "%Su" /dev/console
 
           echo ""
-          echo "Logged-in users:"
+          echo "Logged users:"
           who || true
 
 
       # =========================================================
-      # 2. إنشاء Abdulrahman
+      # 2. CREATE ABDULRAHMAN
       # =========================================================
-      - name: Create Abdulrahman Administrator
+      - name: Create Abdulrahman
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
@@ -78,9 +78,6 @@ jobs:
           echo "Username:"
           echo "$MACOS_USERNAME"
 
-          # -----------------------------------------------------
-          # إنشاء المستخدم إذا لم يكن موجودًا
-          # -----------------------------------------------------
           if id "$MACOS_USERNAME" >/dev/null 2>&1; then
 
             echo ""
@@ -100,11 +97,8 @@ jobs:
 
           fi
 
-          # -----------------------------------------------------
-          # جعله Administrator
-          # -----------------------------------------------------
           echo ""
-          echo "Adding user to admin group..."
+          echo "Adding Administrator privileges..."
 
           sudo dseditgroup \
             -o edit \
@@ -117,21 +111,14 @@ jobs:
           id "$MACOS_USERNAME"
 
           echo ""
-          echo "User groups:"
+          echo "Groups:"
           id -Gn "$MACOS_USERNAME"
 
-          echo ""
-          echo "Home directory:"
-
-          dscl . -read \
-            "/Users/$MACOS_USERNAME" \
-            NFSHomeDirectory
-
 
       # =========================================================
-      # 3. التحقق من أن الحساب Admin فعلًا
+      # 3. VERIFY PASSWORD + ADMIN
       # =========================================================
-      - name: Verify Administrator
+      - name: Verify Abdulrahman
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
@@ -140,11 +127,11 @@ jobs:
           set -e
 
           echo "=========================================="
-          echo " VERIFYING ADMINISTRATOR"
+          echo " VERIFYING ABDULRAHMAN"
           echo "=========================================="
 
           echo ""
-          echo "Username:"
+          echo "whoami:"
           sudo -u "$MACOS_USERNAME" whoami
 
           echo ""
@@ -156,58 +143,35 @@ jobs:
           id -Gn "$MACOS_USERNAME"
 
           echo ""
-          echo "Checking admin membership..."
+          echo "Home:"
+          dscl . -read \
+            "/Users/$MACOS_USERNAME" \
+            NFSHomeDirectory
 
-          if dseditgroup \
-            -o checkmember \
-            -m "$MACOS_USERNAME" \
-            admin | grep -qi "yes"; then
+          echo ""
+          echo "Checking Administrator membership..."
 
-            echo "SUCCESS: $MACOS_USERNAME is an administrator."
+          ADMIN_CHECK=$(
+            dseditgroup \
+              -o checkmember \
+              -m "$MACOS_USERNAME" \
+              admin
+          )
 
+          echo "$ADMIN_CHECK"
+
+          if echo "$ADMIN_CHECK" | grep -qi "yes"; then
+            echo ""
+            echo "SUCCESS: Abdulrahman is an Administrator."
           else
-
-            echo "ERROR: $MACOS_USERNAME is NOT an administrator."
+            echo ""
+            echo "ERROR: Abdulrahman is NOT an Administrator."
             exit 1
-
           fi
 
 
       # =========================================================
-      # 4. اختبار كلمة المرور
-      # =========================================================
-      - name: Verify Password
-        shell: bash
-        env:
-          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
-
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo " VERIFYING PASSWORD"
-          echo "=========================================="
-
-          echo ""
-          echo "Testing authentication for:"
-          echo "$MACOS_USERNAME"
-
-          # إنشاء عملية sudo تحت المستخدم للتأكد
-          # من أن الحساب صالح وقابل للاستخدام.
-          sudo -u "$MACOS_USERNAME" -H \
-            sh -c '
-              echo "whoami=$(whoami)"
-              echo "HOME=$HOME"
-              echo "USER=$USER"
-            '
-
-          echo ""
-          echo "Account is usable."
-
-
-      # =========================================================
-      # 5. ضبط Auto Login لـ Abdulrahman
+      # 4. SET AUTO LOGIN
       # =========================================================
       - name: Configure Abdulrahman Auto Login
         shell: bash
@@ -227,7 +191,7 @@ jobs:
           stat -f "%Su" /dev/console
 
           echo ""
-          echo "Target auto-login user:"
+          echo "Target:"
           echo "$MACOS_USERNAME"
 
           sudo sysadminctl \
@@ -244,13 +208,17 @@ jobs:
             || true
 
           echo ""
+          echo "Current console user:"
+          stat -f "%Su" /dev/console
+
+          echo ""
           echo "IMPORTANT:"
-          echo "Auto-login configuration affects a future login."
-          echo "It does NOT replace the currently active GUI session."
+          echo "Auto-login applies to a future login."
+          echo "It does not replace the current GUI session."
 
 
       # =========================================================
-      # 6. تثبيت RustDesk
+      # 5. INSTALL RUSTDESK
       # =========================================================
       - name: Install RustDesk
         shell: bash
@@ -274,12 +242,11 @@ jobs:
 
           echo ""
           echo "RustDesk version:"
-
           "$RUSTDESK" --version || true
 
 
       # =========================================================
-      # 7. إعداد RustDesk
+      # 6. CONFIGURE RUSTDESK
       # =========================================================
       - name: Configure RustDesk
         shell: bash
@@ -304,7 +271,9 @@ jobs:
           echo "RustDesk ID:"
 
           ID=$(
-            "$RUSTDESK" --get-id 2>/dev/null || true
+            "$RUSTDESK" \
+              --get-id \
+              2>/dev/null || true
           )
 
           echo "$ID"
@@ -334,8 +303,7 @@ jobs:
             echo "SUCCESS: RustDesk password configured."
           else
             echo ""
-            echo "WARNING: Password command did not report Done."
-
+            echo "WARNING: RustDesk did not report Done."
             cat /tmp/rustdesk-server.log || true
           fi
 
@@ -354,7 +322,9 @@ jobs:
           sleep 10
 
           FINAL_ID=$(
-            "$RUSTDESK" --get-id 2>/dev/null || true
+            "$RUSTDESK" \
+              --get-id \
+              2>/dev/null || true
           )
 
           echo ""
@@ -366,15 +336,11 @@ jobs:
           echo "RustDesk ID:"
           echo "$FINAL_ID"
 
-          echo ""
-          echo "RustDesk password:"
-          echo "CONFIGURED"
-
 
       # =========================================================
-      # 8. تشغيل برنامج GUI تحت Abdulrahman
+      # 7. START RUSTDESK AS ABDULRAHMAN
       # =========================================================
-      - name: Test GUI As Abdulrahman
+      - name: Start RustDesk As Abdulrahman
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
@@ -383,15 +349,17 @@ jobs:
           set -e
 
           echo "=========================================="
-          echo " TESTING GUI AS ABDULRAHMAN"
+          echo " STARTING RUSTDESK AS ABDULRAHMAN"
           echo "=========================================="
 
+          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
+
           echo ""
-          echo "Current console user:"
+          echo "Console user:"
           stat -f "%Su" /dev/console
 
           echo ""
-          echo "Opening System Settings as:"
+          echo "Starting RustDesk using:"
           echo "$MACOS_USERNAME"
 
           sudo -u "$MACOS_USERNAME" -H \
@@ -399,23 +367,63 @@ jobs:
             HOME="/Users/$MACOS_USERNAME" \
             USER="$MACOS_USERNAME" \
             LOGNAME="$MACOS_USERNAME" \
-            /usr/bin/open -a "System Settings" \
+            nohup "$RUSTDESK" \
+            >/tmp/rustdesk-abdulrahman.log 2>&1 &
+
+          sleep 10
+
+          echo ""
+          echo "RustDesk processes:"
+          pgrep -fl RustDesk || true
+
+          echo ""
+          echo "RustDesk owned by Abdulrahman:"
+          ps aux | grep "$MACOS_USERNAME" | grep RustDesk || true
+
+          echo ""
+          echo "RustDesk log:"
+          tail -50 \
+            /tmp/rustdesk-abdulrahman.log \
+            2>/dev/null || true
+
+
+      # =========================================================
+      # 8. OPEN SYSTEM SETTINGS AS ABDULRAHMAN
+      # =========================================================
+      - name: Open System Settings As Abdulrahman
+        shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " OPENING SYSTEM SETTINGS"
+          echo "=========================================="
+
+          sudo -u "$MACOS_USERNAME" -H \
+            env \
+            HOME="/Users/$MACOS_USERNAME" \
+            USER="$MACOS_USERNAME" \
+            LOGNAME="$MACOS_USERNAME" \
+            /usr/bin/open \
+            -a "System Settings" \
             2>&1 || true
 
           sleep 5
 
           echo ""
-          echo "Processes for Abdulrahman:"
-
-          ps aux | grep "$MACOS_USERNAME" | grep -v grep || true
+          echo "Console user:"
+          stat -f "%Su" /dev/console
 
           echo ""
-          echo "Console user remains:"
-          stat -f "%Su" /dev/console
+          echo "GUI sessions:"
+          who || true
 
 
       # =========================================================
-      # 9. المعلومات النهائية
+      # 9. FINAL CHECK
       # =========================================================
       - name: Final Check
         shell: bash
@@ -436,11 +444,15 @@ jobs:
           who || true
 
           echo ""
+          echo "Current Actions user:"
+          whoami
+
+          echo ""
           echo "Abdulrahman:"
           id "$MACOS_USERNAME"
 
           echo ""
-          echo "Admin groups:"
+          echo "Abdulrahman groups:"
           id -Gn "$MACOS_USERNAME"
 
           echo ""
@@ -449,20 +461,14 @@ jobs:
 
 
       # =========================================================
-      # 10. إبقاء الـRunner متصل
+      # 10. KEEP RUNNER ALIVE
       # =========================================================
       - name: Keep Runner Alive
         shell: bash
         run: |
           echo "=========================================="
-          echo " macOS RUNNER IS ONLINE"
+          echo " RUNNER IS ONLINE"
           echo "=========================================="
-
-          echo ""
-          echo "RustDesk is running."
-          echo "Abdulrahman account is configured."
-          echo "The workflow will remain active."
-          echo ""
 
           while true
           do
@@ -472,6 +478,9 @@ jobs:
             echo "Console user:"
             stat -f "%Su" /dev/console \
               2>/dev/null || echo "unknown"
+
+            echo "Logged users:"
+            who || true
 
             echo "RustDesk:"
             pgrep -fl RustDesk || true
