@@ -6,35 +6,162 @@ on:
 jobs:
   rustdesk:
     runs-on: macos-latest
-
     timeout-minutes: 360
 
     steps:
-      - name: Show macOS information
+      - name: Check macOS
         run: |
+          echo "macOS:"
           sw_vers
+
+          echo "Architecture:"
           uname -m
+
+      - name: Download RustDesk
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ARCH="$(uname -m)"
+
+          echo "Runner architecture: $ARCH"
+
+          echo "Getting latest RustDesk release..."
+
+          API="https://api.github.com/repos/rustdesk/rustdesk/releases/latest"
+
+          if [[ "$ARCH" == "arm64" ]]; then
+            PATTERN="aarch64.*\.dmg"
+          else
+            PATTERN="x86_64.*\.dmg"
+          fi
+
+          URL="$(
+            curl -fsSL "$API" |
+            python3 -c '
+          import json
+          import sys
+          import re
+
+          data = json.load(sys.stdin)
+          pattern = sys.argv[1]
+
+          for asset in data.get("assets", []):
+              name = asset.get("name", "")
+              url = asset.get("browser_download_url", "")
+
+              if re.search(pattern, name, re.I):
+                  print(url)
+                  break
+          ' "$PATTERN"
+          )"
+
+          if [[ -z "$URL" ]]; then
+            echo "ERROR: Could not find a compatible RustDesk DMG."
+            echo "Available assets:"
+            curl -fsSL "$API" |
+              python3 -c '
+          import json
+          import sys
+
+          data = json.load(sys.stdin)
+
+          for asset in data.get("assets", []):
+              print(asset.get("name", ""))
+          '
+
+            exit 1
+          fi
+
+          echo "RustDesk URL:"
+          echo "$URL"
+
+          curl -fL "$URL" -o /tmp/rustdesk.dmg
+
+          echo "Download complete."
+
+          ls -lh /tmp/rustdesk.dmg
 
       - name: Install RustDesk
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          echo "Downloading RustDesk..."
+          echo "Mounting RustDesk DMG..."
 
-          if [[ "$(uname -m)" == "arm64" ]]; then
-            URL=$(curl -sL https://api.github.com/repos/rustdesk/rustdesk/releases/latest \
-              | grep '"browser_download_url"' \
-              | grep 'aarch64.dmg' \
-              | head -1 \
-              | cut -d '"' -f 4)
-          else
-            URL=$(curl -sL https://api.github.com/repos/rustdesk/rustdesk/releases/latest \
-              | grep '"browser_download_url"' \
-              | grep 'x86_64.dmg' \
-              | head -1 \
-              | cut -d '"' -f 4)
+          hdiutil attach /tmp/rustdesk.dmg \
+            -nobrowse \
+            -readonly
+
+          echo "Mounted volumes:"
+          ls -la /Volumes/
+
+          RUSTDESK_APP="$(find /Volumes -maxdepth 2 -name 'RustDesk.app' -print -quit)"
+
+          if [[ -z "$RUSTDESK_APP" ]]; then
+            echo "ERROR: RustDesk.app was not found."
+
+            hdiutil info
+
+            exit 1
           fi
+
+          echo "Found:"
+          echo "$RUSTDESK_APP"
+
+          sudo rm -rf /Applications/RustDesk.app
+
+          sudo cp -R "$RUSTDESK_APP" /Applications/RustDesk.app
+
+          hdiutil detach "$(dirname "$RUSTDESK_APP")" 2>/dev/null || true
+
+          echo "RustDesk installed."
+
+          ls -ld /Applications/RustDesk.app
+
+      - name: Start RustDesk
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          open -a "/Applications/RustDesk.app"
+
+          echo "Waiting for RustDesk..."
+          sleep 15
+
+          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
+
+          if [[ ! -f "$RUSTDESK" ]]; then
+            echo "ERROR: RustDesk executable not found."
+            exit 1
+          fi
+
+          echo "RustDesk executable found."
+
+          ID="$("$RUSTDESK" --get-id 2>/dev/null || true)"
+
+          echo ""
+          echo "=========================================="
+          echo "          RUSTDESK CONNECTION"
+          echo "=========================================="
+          echo "RustDesk ID: $ID"
+          echo "=========================================="
+          echo ""
+
+      - name: Keep macOS runner alive
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo " macOS Runner is now running"
+          echo "=========================================="
+          echo ""
+          echo "The GitHub Actions job will remain active."
+          echo ""
+
+          while true; do
+            echo "[$(date)] macOS runner alive..."
+            sleep 300
+          done          fi
 
           echo "URL: $URL"
 
