@@ -12,27 +12,21 @@ jobs:
 
       - name: macOS Info
         run: |
-          echo "===== macOS ====="
           sw_vers
-          echo ""
-          echo "===== Architecture ====="
-          uname -m
+          echo "Architecture: $(uname -m)"
 
       - name: Install RustDesk
+        shell: bash
         run: |
           set -e
 
           ARCH=$(uname -m)
-
-          echo "Architecture: $ARCH"
 
           if [ "$ARCH" = "arm64" ]; then
             ARCH_NAME="aarch64"
           else
             ARCH_NAME="x86_64"
           fi
-
-          echo "Downloading RustDesk..."
 
           curl -fsSL \
             https://api.github.com/repos/rustdesk/rustdesk/releases/latest \
@@ -52,54 +46,34 @@ jobs:
           ")
 
           if [ -z "$URL" ]; then
-            echo "ERROR: RustDesk DMG not found."
-            echo ""
-            echo "Available files:"
-            python3 -c "
-          import json
-          data=json.load(open('/tmp/release.json'))
-          for a in data['assets']:
-              print(a['name'])
-          "
+            echo "RustDesk DMG not found."
             exit 1
           fi
 
-          echo "Download URL:"
-          echo "$URL"
-
           curl -fL "$URL" -o /tmp/rustdesk.dmg
-
-          echo "RustDesk downloaded successfully."
-
-      - name: Install Application
-        run: |
-          set -e
-
-          echo "Mounting RustDesk..."
 
           hdiutil attach /tmp/rustdesk.dmg -nobrowse -readonly
 
           APP=$(find /Volumes -name "RustDesk.app" -type d -print -quit)
 
           if [ -z "$APP" ]; then
-            echo "ERROR: RustDesk.app not found."
+            echo "RustDesk.app not found."
             exit 1
           fi
 
-          echo "Found:"
-          echo "$APP"
-
           sudo rm -rf /Applications/RustDesk.app
-
           sudo cp -R "$APP" /Applications/RustDesk.app
 
           hdiutil detach "$(dirname "$APP")" || true
 
-          echo "RustDesk installed successfully."
+          echo "RustDesk installed."
 
       - name: Start RustDesk
+        shell: bash
+        env:
+          RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
         run: |
-          echo "Starting RustDesk..."
+          set -e
 
           open -a "/Applications/RustDesk.app"
 
@@ -107,32 +81,29 @@ jobs:
 
           RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
 
+          echo "RustDesk executable:"
+          echo "$RUSTDESK"
+
           echo ""
-          echo "======================================"
-          echo "        RUSTDESK INFORMATION"
-          echo "======================================"
+          echo "RustDesk version:"
+          "$RUSTDESK" --version || true
 
-          if [ -f "$RUSTDESK" ]; then
+          echo ""
+          echo "RustDesk ID:"
 
-            ID=$("$RUSTDESK" --get-id 2>/dev/null || true)
+          ID=$("$RUSTDESK" --get-id 2>/dev/null || true)
 
-            echo "RustDesk ID: $ID"
+          echo "$ID"
 
-          else
+          echo ""
+          echo "Checking available RustDesk commands..."
 
-            echo "RustDesk executable not found."
-
-          fi
-
-          echo "======================================"
+          "$RUSTDESK" --help 2>&1 | head -100 || true
 
       - name: Keep Runner Alive
+        shell: bash
         run: |
-          echo ""
-          echo "======================================"
-          echo "       MACOS RUNNER ONLINE"
-          echo "======================================"
-          echo ""
+          echo "macOS Runner is online."
 
           while true
           do
