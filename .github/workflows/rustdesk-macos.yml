@@ -20,7 +20,7 @@ jobs:
           set -e
 
           echo "=========================================="
-          echo "          macOS INFORMATION"
+          echo "          MACOS INFORMATION"
           echo "=========================================="
 
           sw_vers
@@ -30,9 +30,140 @@ jobs:
           uname -m
 
           echo ""
-          echo "User:"
+          echo "Current Actions User:"
           whoami
 
+          echo "=========================================="
+
+      # ==========================================
+      # CREATE MACOS USER
+      # ==========================================
+
+      - name: Create macOS User
+        shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "          CREATING MACOS USER"
+          echo "=========================================="
+
+          if [ -z "$MACOS_USERNAME" ]; then
+            echo "ERROR: MACOS_USERNAME secret is empty."
+            exit 1
+          fi
+
+          if [ -z "$MACOS_PASSWORD" ]; then
+            echo "ERROR: MACOS_PASSWORD secret is empty."
+            exit 1
+          fi
+
+          # Prevent invalid/problematic account names
+          if [[ ! "$MACOS_USERNAME" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+            echo "ERROR: MACOS_USERNAME contains unsupported characters."
+            echo "Use letters, numbers, dot, underscore or hyphen."
+            exit 1
+          fi
+
+          # ------------------------------------------
+          # Check whether user already exists
+          # ------------------------------------------
+
+          if id "$MACOS_USERNAME" >/dev/null 2>&1; then
+
+            echo "User already exists."
+
+          else
+
+            echo "Creating user: $MACOS_USERNAME"
+
+            sudo sysadminctl \
+              -addUser "$MACOS_USERNAME" \
+              -fullName "$MACOS_USERNAME" \
+              -password "$MACOS_PASSWORD"
+
+            echo "User created."
+
+          fi
+
+          # ------------------------------------------
+          # Add user to Administrators
+          # ------------------------------------------
+
+          echo ""
+          echo "Adding user to Administrators..."
+
+          sudo dseditgroup \
+            -o edit \
+            -a "$MACOS_USERNAME" \
+            -t user \
+            admin
+
+          echo "User added to Administrators."
+
+          # ------------------------------------------
+          # Verify account
+          # ------------------------------------------
+
+          echo ""
+          echo "=========================================="
+          echo "          USER INFORMATION"
+          echo "=========================================="
+
+          id "$MACOS_USERNAME"
+
+          echo ""
+          echo "Admin membership:"
+
+          if dseditgroup -o checkmember -m "$MACOS_USERNAME" admin | grep -qi "yes"; then
+            echo "YES - Administrator"
+          else
+            echo "WARNING - Administrator membership could not be confirmed."
+          fi
+
+          echo ""
+          echo "Home directory:"
+
+          dscl . -read "/Users/$MACOS_USERNAME" NFSHomeDirectory
+
+          echo ""
+          echo "=========================================="
+
+      # ==========================================
+      # TEST COMMAND AS NEW USER
+      # ==========================================
+
+      - name: Test macOS User
+        shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "          TESTING MACOS USER"
+          echo "=========================================="
+
+          echo ""
+          echo "Running test command as:"
+          echo "$MACOS_USERNAME"
+
+          sudo -u "$MACOS_USERNAME" whoami
+
+          echo ""
+          echo "Home directory:"
+
+          sudo -u "$MACOS_USERNAME" sh -c 'echo "$HOME"'
+
+          echo ""
+          echo "User ID:"
+
+          sudo -u "$MACOS_USERNAME" id
+
+          echo ""
           echo "=========================================="
 
       # ==========================================
@@ -112,253 +243,7 @@ jobs:
           echo "RustDesk ID: $ID"
 
           # ------------------------------------------
-          # Start RustDesk SERVER
-          # ------------------------------------------
-
-          echo ""
-          echo "Starting RustDesk server..."
-
-          "$RUSTDESK" --server >/tmp/rustdesk-server.log 2>&1 &
-
-          SERVER_PID=$!
-
-          echo "RustDesk server PID: $SERVER_PID"
-
-          sleep 10
-
-          # ------------------------------------------
-          # Set permanent password as administrator
-          # ------------------------------------------
-
-          echo ""
-          echo "Setting permanent password..."
-
-          PASSWORD_OUTPUT=$(sudo "$RUSTDESK" --password "$RUSTDESK_PASSWORD" 2>&1)
-
-          echo "Password command output:"
-          echo "$PASSWORD_OUTPUT"
-
-          # ------------------------------------------
-          # Check result
-          # ------------------------------------------
-
-          if echo "$PASSWORD_OUTPUT" | grep -qi "done"; then
-
-            echo ""
-            echo "=========================================="
-            echo "SUCCESS: Permanent password configured."
-            echo "=========================================="
-
-          else
-
-            echo ""
-            echo "=========================================="
-            echo "WARNING: RustDesk did not report success."
-            echo "=========================================="
-
-            echo ""
-            echo "RustDesk server log:"
-            cat /tmp/rustdesk-server.log || true
-
-          fi
-
-          sleep 5
-
-          # ------------------------------------------
-          # Restart RustDesk
-          # ------------------------------------------
-
-          echo ""
-          echo "Restarting RustDesk..."
-
-          pkill -f "/Applications/RustDesk.app/Contents/MacOS/RustDesk" || true
-
-          sleep 5
-
-          echo "Starting RustDesk again..."
-
-          nohup "$RUSTDESK" >/tmp/rustdesk.log 2>&1 &
-
-          RUSTDESK_PID=$!
-
-          echo "RustDesk PID: $RUSTDESK_PID"
-
-          sleep 10
-
-          # ------------------------------------------
-          # Verify process
-          # ------------------------------------------
-
-          echo ""
-          echo "Checking RustDesk..."
-
-          if kill -0 "$RUSTDESK_PID" 2>/dev/null; then
-
-            echo "RustDesk is running."
-
-          else
-
-            echo "WARNING: RustDesk process is not running."
-
-            echo ""
-            echo "RustDesk log:"
-            cat /tmp/rustdesk.log || true
-
-            exit 1
-
-          fi
-
-          # ------------------------------------------
-          # Get final ID
-          # ------------------------------------------
-
-          echo ""
-          echo "Getting final RustDesk ID..."
-
-          FINAL_ID=$("$RUSTDESK" --get-id 2>/dev/null || true)
-
-          echo ""
-          echo "=========================================="
-          echo "          RUSTDESK CONNECTION"
-          echo "=========================================="
-          echo ""
-          echo "RustDesk ID: $FINAL_ID"
-          echo ""
-          echo "Permanent password: CONFIGURED"
-          echo ""
-          echo "=========================================="
-
-      # ==========================================
-      # VERIFY
-      # ==========================================
-
-      - name: Verify RustDesk
-        shell: bash
-        run: |
-          echo "=========================================="
-          echo "          RUSTDESK STATUS"
-          echo "=========================================="
-
-          echo ""
-          echo "Running processes:"
-
-          pgrep -fl RustDesk || true
-
-          echo ""
-          echo "RustDesk application:"
-
-          ls -ld /Applications/RustDesk.app
-
-          echo ""
-          echo "RustDesk log:"
-
-          tail -50 /tmp/rustdesk.log 2>/dev/null || true
-
-          echo ""
-          echo "=========================================="
-
-      # ==========================================
-      # KEEP RUNNER ALIVE
-      # ==========================================
-
-      - name: Keep Runner Alive
-        shell: bash
-        run: |
-          echo ""
-          echo "=========================================="
-          echo "       MACOS RUNNER IS NOW ONLINE"
-          echo "=========================================="
-          echo ""
-          echo "RustDesk is running."
-          echo "Permanent password is configured."
-          echo ""
-          echo "The GitHub Actions job will remain active."
-          echo ""
-          echo "=========================================="
-
-          while true
-          do
-            echo "[$(date)] macOS Runner is alive..."
-            sleep 300
-          done
-      # ==========================================
-      # INSTALL RUSTDESK
-      # ==========================================
-
-      - name: Install RustDesk
-        shell: bash
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo "          INSTALLING RUSTDESK"
-          echo "=========================================="
-
-          brew update
-
-          echo "Installing RustDesk..."
-
-          brew install --cask rustdesk
-
-          echo ""
-          echo "Checking installation..."
-
-          if [ ! -d "/Applications/RustDesk.app" ]; then
-            echo "ERROR: RustDesk.app was not found."
-            exit 1
-          fi
-
-          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
-
-          if [ ! -f "$RUSTDESK" ]; then
-            echo "ERROR: RustDesk executable was not found."
-            exit 1
-          fi
-
-          echo "RustDesk installed successfully."
-
-          echo ""
-          echo "RustDesk version:"
-
-          "$RUSTDESK" --version || true
-
-          echo "=========================================="
-
-      # ==========================================
-      # CONFIGURE RUSTDESK
-      # ==========================================
-
-      - name: Configure RustDesk
-        shell: bash
-        env:
-          RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
-        run: |
-          set -e
-
-          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
-
-          echo "=========================================="
-          echo "          CONFIGURING RUSTDESK"
-          echo "=========================================="
-
-          if [ -z "$RUSTDESK_PASSWORD" ]; then
-            echo "ERROR: RUSTDESK_PASSWORD secret is empty."
-            exit 1
-          fi
-
-          # ------------------------------------------
-          # Get ID BEFORE changing password
-          # ------------------------------------------
-
-          echo ""
-          echo "Getting RustDesk ID..."
-
-          ID=$("$RUSTDESK" --get-id 2>/dev/null || true)
-
-          echo "RustDesk ID: $ID"
-
-          # ------------------------------------------
-          # Start RustDesk SERVER
+          # Start RustDesk server
           # ------------------------------------------
 
           echo ""
@@ -379,14 +264,27 @@ jobs:
           echo ""
           echo "Setting permanent password..."
 
-          "$RUSTDESK" --password "$RUSTDESK_PASSWORD"
+          PASSWORD_OUTPUT=$(sudo "$RUSTDESK" --password "$RUSTDESK_PASSWORD" 2>&1)
 
-          echo "Permanent password command completed."
+          echo "Password command output:"
+          echo "$PASSWORD_OUTPUT"
+
+          if echo "$PASSWORD_OUTPUT" | grep -qi "done"; then
+            echo ""
+            echo "SUCCESS: Permanent password configured."
+          else
+            echo ""
+            echo "WARNING: RustDesk did not report success."
+
+            echo ""
+            echo "RustDesk server log:"
+            cat /tmp/rustdesk-server.log || true
+          fi
 
           sleep 5
 
           # ------------------------------------------
-          # Stop existing RustDesk processes
+          # Restart RustDesk
           # ------------------------------------------
 
           echo ""
@@ -396,13 +294,10 @@ jobs:
 
           sleep 5
 
-          # ------------------------------------------
-          # Start RustDesk again
-          # ------------------------------------------
-
           echo "Starting RustDesk again..."
 
-          nohup "$RUSTDESK" >/tmp/rustdesk.log 2>&1 &
+          nohup "$RUSTDESK" \
+            >/tmp/rustdesk.log 2>&1 &
 
           RUSTDESK_PID=$!
 
@@ -411,7 +306,7 @@ jobs:
           sleep 10
 
           # ------------------------------------------
-          # Verify process
+          # Verify RustDesk
           # ------------------------------------------
 
           echo ""
@@ -430,11 +325,8 @@ jobs:
           fi
 
           # ------------------------------------------
-          # Get ID again
+          # Final ID
           # ------------------------------------------
-
-          echo ""
-          echo "Getting final RustDesk ID..."
 
           FINAL_ID=$("$RUSTDESK" --get-id 2>/dev/null || true)
 
@@ -446,6 +338,9 @@ jobs:
           echo "RustDesk ID: $FINAL_ID"
           echo ""
           echo "Permanent password: CONFIGURED"
+          echo ""
+          echo "macOS Username: CONFIGURED"
+          echo "macOS Password: CONFIGURED"
           echo ""
           echo "=========================================="
 
@@ -490,8 +385,10 @@ jobs:
           echo "       MACOS RUNNER IS NOW ONLINE"
           echo "=========================================="
           echo ""
+          echo "macOS User has been created."
+          echo "Administrator privileges configured."
           echo "RustDesk is running."
-          echo "Permanent password is configured."
+          echo "Permanent RustDesk password is configured."
           echo ""
           echo "The GitHub Actions job will remain active."
           echo ""
