@@ -388,7 +388,78 @@ jobs:
 
 
       # =========================================================
-      # 8. OPEN SYSTEM SETTINGS AS ABDULRAHMAN
+      # 8. RUSTDESK WATCHDOG
+      # =========================================================
+      - name: RustDesk Watchdog
+        shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+
+        run: |
+          set -u
+
+          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
+          LOG="/tmp/rustdesk-watchdog.log"
+
+          echo "=========================================="
+          echo " RUSTDESK WATCHDOG"
+          echo "=========================================="
+
+          echo ""
+          echo "RustDesk:"
+          echo "$RUSTDESK"
+
+          echo ""
+          echo "User:"
+          echo "$MACOS_USERNAME"
+
+          echo ""
+          echo "Starting watchdog..."
+
+          while true
+          do
+
+            if pgrep -x "RustDesk" >/dev/null 2>&1
+            then
+              echo "[$(date)] RustDesk is RUNNING."
+            else
+              echo "[$(date)] RustDesk is NOT running!"
+              echo "[$(date)] Restarting RustDesk..."
+
+              sudo -u "$MACOS_USERNAME" -H \
+                env \
+                HOME="/Users/$MACOS_USERNAME" \
+                USER="$MACOS_USERNAME" \
+                LOGNAME="$MACOS_USERNAME" \
+                nohup "$RUSTDESK" \
+                >>"$LOG" 2>&1 &
+
+              sleep 10
+
+              if pgrep -x "RustDesk" >/dev/null 2>&1
+              then
+                echo "[$(date)] SUCCESS: RustDesk restarted."
+              else
+                echo "[$(date)] ERROR: RustDesk failed to restart."
+                echo "----- RustDesk log -----"
+                tail -50 "$LOG" 2>/dev/null || true
+              fi
+            fi
+
+            echo ""
+            echo "RustDesk processes:"
+            pgrep -fl RustDesk || true
+
+            echo ""
+            echo "------------------------------------------"
+
+            sleep 30
+
+          done
+
+
+      # =========================================================
+      # 9. OPEN SYSTEM SETTINGS AS ABDULRAHMAN
       # =========================================================
       - name: Open System Settings As Abdulrahman
         shell: bash
@@ -423,7 +494,7 @@ jobs:
 
 
       # =========================================================
-      # 9. FINAL CHECK
+      # 10. FINAL CHECK
       # =========================================================
       - name: Final Check
         shell: bash
@@ -461,7 +532,7 @@ jobs:
 
 
       # =========================================================
-      # 10. KEEP RUNNER ALIVE
+      # 11. KEEP RUNNER ALIVE
       # =========================================================
       - name: Keep Runner Alive
         shell: bash
@@ -487,3 +558,5 @@ jobs:
 
             sleep 300
           done
+
+
