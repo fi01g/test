@@ -63,6 +63,7 @@ jobs:
             echo "User already exists:"
             id "$MACOS_USERNAME"
           else
+
             echo "Creating user..."
 
             sudo sysadminctl \
@@ -71,6 +72,7 @@ jobs:
               -password "$MACOS_PASSWORD"
 
             echo "User created."
+
           fi
 
           echo
@@ -164,7 +166,7 @@ jobs:
 
           if [ -d "/Applications/Tailscale.app" ]; then
 
-            echo "Tailscale.app already exists."
+            echo "Tailscale.app already installed."
 
           else
 
@@ -182,7 +184,7 @@ jobs:
               -o "$TAILSCALE_PKG"
 
             echo
-            echo "Package downloaded:"
+            echo "Downloaded:"
             ls -lh "$TAILSCALE_PKG"
 
             echo
@@ -195,19 +197,191 @@ jobs:
           fi
 
           echo
-          echo "Checking application..."
+          echo "Checking installation..."
 
           test -d "/Applications/Tailscale.app"
 
           echo "Tailscale.app FOUND."
 
           echo
-          echo "CLI:"
+          echo "=================================================="
+
+
+      # =========================================================
+      # 6. LOCATE TAILSCALE COMPONENTS
+      # =========================================================
+      - name: Locate Tailscale Components
+        shell: bash
+        run: |
+          set -e
+
+          echo "=================================================="
+          echo "LOCATING TAILSCALE COMPONENTS"
+          echo "=================================================="
+
+          echo
+          echo "Tailscale.app contents:"
+
+          find \
+            "/Applications/Tailscale.app/Contents" \
+            -maxdepth 4 \
+            -type f \
+            2>/dev/null \
+            | grep -E \
+              'tailscale$|tailscaled$|Tailscale$' \
+            || true
+
+          echo
+          echo "Checking expected binaries..."
 
           if [ -x "/usr/local/bin/tailscale" ]; then
+            echo "tailscale CLI:"
             ls -l /usr/local/bin/tailscale
+          fi
+
+          if [ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]; then
+            echo "GUI CLI:"
+            ls -l \
+              "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+          fi
+
+          if [ -x "/Applications/Tailscale.app/Contents/MacOS/tailscaled" ]; then
+            echo "tailscaled:"
+            ls -l \
+              "/Applications/Tailscale.app/Contents/MacOS/tailscaled"
+          fi
+
+          echo
+          echo "Searching for tailscaled:"
+
+          find \
+            "/Applications/Tailscale.app" \
+            -name "tailscaled" \
+            -type f \
+            -perm -111 \
+            2>/dev/null \
+            || true
+
+          echo
+          echo "=================================================="
+
+
+      # =========================================================
+      # 7. START TAILSCALED MANUALLY
+      # =========================================================
+      - name: Start Tailscale Daemon
+        shell: bash
+        run: |
+          set -e
+
+          echo "=================================================="
+          echo "STARTING TAILSCALE DAEMON"
+          echo "=================================================="
+
+          TAILSCALED=""
+
+          if [ -x "/Applications/Tailscale.app/Contents/MacOS/tailscaled" ]; then
+
+            TAILSCALED="/Applications/Tailscale.app/Contents/MacOS/tailscaled"
+
+          elif [ -x "/usr/local/bin/tailscaled" ]; then
+
+            TAILSCALED="/usr/local/bin/tailscaled"
+
           else
-            echo "CLI symlink not found yet."
+
+            TAILSCALED=$(find \
+              "/Applications/Tailscale.app" \
+              -name "tailscaled" \
+              -type f \
+              -perm -111 \
+              2>/dev/null \
+              | head -1)
+
+          fi
+
+          if [ -z "$TAILSCALED" ]; then
+
+            echo "ERROR: tailscaled was not found."
+
+            exit 1
+
+          fi
+
+          echo
+          echo "tailscaled:"
+          echo "$TAILSCALED"
+
+          echo
+          echo "Creating state directory..."
+
+          sudo mkdir -p /var/lib/tailscale
+
+          sudo chmod 700 /var/lib/tailscale
+
+          echo
+          echo "Starting daemon..."
+
+          sudo pkill -f tailscaled \
+            2>/dev/null || true
+
+          sleep 2
+
+          sudo "$TAILSCALED" \
+            --state=/var/lib/tailscale/tailscaled.state \
+            --socket=/var/run/tailscaled.sock \
+            > /tmp/tailscaled.stdout.log \
+            2> /tmp/tailscaled.stderr.log &
+
+          TAILSCALED_PID=$!
+
+          echo
+          echo "tailscaled PID:"
+          echo "$TAILSCALED_PID"
+
+          echo
+          echo "Waiting for daemon socket..."
+
+          DAEMON_READY=0
+
+          for i in {1..30}; do
+
+            if [ -S /var/run/tailscaled.sock ]; then
+
+              echo
+              echo "Tailscale daemon socket FOUND."
+
+              DAEMON_READY=1
+
+              break
+
+            fi
+
+            echo "Waiting... $i/30"
+
+            sleep 1
+
+          done
+
+          if [ "$DAEMON_READY" -ne 1 ]; then
+
+            echo
+            echo "ERROR: tailscaled socket was not created."
+
+            echo
+            echo "tailscaled stdout:"
+            cat /tmp/tailscaled.stdout.log || true
+
+            echo
+            echo "tailscaled stderr:"
+            cat /tmp/tailscaled.stderr.log || true
+
+            echo
+            echo "tailscaled process:"
+            ps aux | grep '[t]ailscaled' || true
+
+            exit 1
+
           fi
 
           echo
@@ -215,55 +389,15 @@ jobs:
 
 
       # =========================================================
-      # 6. START TAILSCALE GUI
+      # 8. VERIFY TAILSCALE CLI
       # =========================================================
-      - name: Start Tailscale GUI
+      - name: Verify Tailscale CLI
         shell: bash
         run: |
           set -e
 
           echo "=================================================="
-          echo "STARTING TAILSCALE GUI"
-          echo "=================================================="
-
-          open -a "Tailscale"
-
-          echo
-          echo "Waiting for Tailscale..."
-
-          for i in {1..30}; do
-
-            echo
-            echo "Attempt $i/30"
-
-            if pgrep -f "Tailscale" >/dev/null 2>&1; then
-              echo "Tailscale process detected."
-              break
-            fi
-
-            sleep 2
-
-          done
-
-          echo
-          echo "Tailscale processes:"
-
-          pgrep -alf "Tailscale" || true
-
-          echo
-          echo "=================================================="
-
-
-      # =========================================================
-      # 7. FIND TAILSCALE CLI
-      # =========================================================
-      - name: Locate Tailscale CLI
-        shell: bash
-        run: |
-          set -e
-
-          echo "=================================================="
-          echo "LOCATING TAILSCALE CLI"
+          echo "VERIFYING TAILSCALE CLI"
           echo "=================================================="
 
           if [ -x "/usr/local/bin/tailscale" ]; then
@@ -276,68 +410,23 @@ jobs:
 
           else
 
-            echo "ERROR: Tailscale CLI not found."
-
-            find \
-              /Applications/Tailscale.app \
-              -type f \
-              -perm -111 \
-              2>/dev/null \
-              | head -50
+            echo "ERROR: tailscale CLI not found."
 
             exit 1
 
           fi
 
           echo
-          echo "Tailscale CLI:"
+          echo "CLI:"
           echo "$TAILSCALE_BIN"
 
           echo
-          echo "Binary information:"
-          file "$TAILSCALE_BIN"
+          echo "Running version with daemon socket..."
 
-          echo
-          echo "=================================================="
-
-
-      # =========================================================
-      # 8. CHECK TAILSCALE DAEMON
-      # =========================================================
-      - name: Check Tailscale Daemon
-        shell: bash
-        run: |
-          set +e
-
-          echo "=================================================="
-          echo "CHECKING TAILSCALE DAEMON"
-          echo "=================================================="
-
-          echo
-          echo "Processes:"
-
-          ps aux | grep -i '[t]ailscale' || true
-
-          echo
-          echo "LaunchDaemons:"
-
-          sudo launchctl list \
-            | grep -i tailscale \
-            || true
-
-          echo
-          echo "System extensions:"
-
-          systemextensionsctl list \
-            2>/dev/null \
-            | grep -i tailscale \
-            || true
-
-          echo
-          echo "Network interfaces:"
-
-          ifconfig \
-            | grep -A4 -B2 -i tailscale \
+          timeout 10 \
+            "$TAILSCALE_BIN" \
+            --socket=/var/run/tailscaled.sock \
+            version \
             || true
 
           echo
@@ -345,7 +434,7 @@ jobs:
 
 
       # =========================================================
-      # 9. AUTHENTICATE TAILSCALE - HARD TIMEOUT
+      # 9. AUTHENTICATE TAILSCALE
       # =========================================================
       - name: Authenticate Tailscale
         shell: bash
@@ -369,13 +458,19 @@ jobs:
           echo "$TAILSCALE_BIN"
 
           echo
-          echo "Starting tailscale up..."
+          echo "Daemon socket:"
+          ls -l /var/run/tailscaled.sock
+
+          echo
+          echo "Running tailscale up..."
 
           rm -f /tmp/tailscale-up.stdout
           rm -f /tmp/tailscale-up.stderr
 
           (
-            sudo "$TAILSCALE_BIN" up \
+            sudo "$TAILSCALE_BIN" \
+              --socket=/var/run/tailscaled.sock \
+              up \
               --authkey="$TAILSCALE_AUTH_KEY" \
               --hostname="github-macos-rdp" \
               > /tmp/tailscale-up.stdout \
@@ -388,19 +483,19 @@ jobs:
           echo "PID:"
           echo "$TAILSCALE_PID"
 
-          echo
-          echo "Waiting maximum 45 seconds..."
-
           FINISHED=0
 
-          for i in {1..45}; do
+          for i in {1..60}; do
 
             if ! kill -0 "$TAILSCALE_PID" 2>/dev/null; then
+
               FINISHED=1
+
               break
+
             fi
 
-            echo "Waiting... $i/45"
+            echo "Waiting... $i/60"
 
             sleep 1
 
@@ -409,7 +504,7 @@ jobs:
           if [ "$FINISHED" -eq 0 ]; then
 
             echo
-            echo "ERROR: tailscale up timed out."
+            echo "ERROR: tailscale up timed out after 60 seconds."
 
             kill "$TAILSCALE_PID" \
               2>/dev/null || true
@@ -448,12 +543,30 @@ jobs:
 
           echo
           echo "=================================================="
+          echo "TAILSCALED STDOUT"
+          echo "=================================================="
+
+          cat /tmp/tailscaled.stdout.log \
+            2>/dev/null || true
+
+          echo
+          echo "=================================================="
+          echo "TAILSCALED STDERR"
+          echo "=================================================="
+
+          cat /tmp/tailscaled.stderr.log \
+            2>/dev/null || true
+
+          echo
+          echo "=================================================="
 
           if [ "$EXIT_CODE" -ne 0 ]; then
+
             echo
-            echo "Tailscale authentication did not complete."
-            echo "Stopping here so we can see the exact error."
+            echo "Tailscale authentication failed."
+
             exit "$EXIT_CODE"
+
           fi
 
           echo
@@ -461,15 +574,15 @@ jobs:
 
 
       # =========================================================
-      # 10. VERIFY TAILSCALE
+      # 10. VERIFY TAILSCALE NETWORK
       # =========================================================
-      - name: Verify Tailscale
+      - name: Verify Tailscale Network
         shell: bash
         run: |
           set +e
 
           echo "=================================================="
-          echo "VERIFYING TAILSCALE"
+          echo "VERIFYING TAILSCALE NETWORK"
           echo "=================================================="
 
           TAILSCALE_BIN="/usr/local/bin/tailscale"
@@ -479,19 +592,25 @@ jobs:
           fi
 
           echo
-          echo "Tailscale status:"
+          echo "Status:"
 
-          "$TAILSCALE_BIN" status \
-            2>&1 || true
-
-          echo
-          echo "Tailscale IP:"
-
-          "$TAILSCALE_BIN" ip -4 \
-            2>&1 || true
+          timeout 15 \
+            "$TAILSCALE_BIN" \
+            --socket=/var/run/tailscaled.sock \
+            status \
+            || true
 
           echo
-          echo "Tailscale interfaces:"
+          echo "IPv4:"
+
+          timeout 15 \
+            "$TAILSCALE_BIN" \
+            --socket=/var/run/tailscaled.sock \
+            ip -4 \
+            || true
+
+          echo
+          echo "Interfaces:"
 
           ifconfig \
             | grep -A5 -B2 -i tailscale \
@@ -526,10 +645,8 @@ jobs:
 
           source "$HOME/.cargo/env"
 
-          echo
           rustc --version
 
-          echo
           cargo --version
 
           echo
@@ -809,9 +926,6 @@ jobs:
           echo
           echo "LaunchAgent ready."
 
-          echo
-          echo "=================================================="
-
 
       # =========================================================
       # 18. START MACRDP
@@ -846,19 +960,15 @@ jobs:
             "gui/$TARGET_UID" \
             "$TARGET_HOME/Library/LaunchAgents/com.macrdp.server.plist"
 
-          BOOTSTRAP_EXIT=$?
-
           echo
           echo "Bootstrap exit:"
-          echo "$BOOTSTRAP_EXIT"
+          echo "$?"
 
           sudo -u "$MACOS_USERNAME" \
             launchctl kickstart \
             -k \
-            "gui/$TARGET_UID/com.macrdp.server"
-
-          echo
-          echo "Waiting 10 seconds..."
+            "gui/$TARGET_UID/com.macrdp.server" \
+            || true
 
           sleep 10
 
@@ -913,9 +1023,6 @@ jobs:
 
           done
 
-          echo
-          echo "=================================================="
-
 
       # =========================================================
       # 19. CONNECTION INFORMATION
@@ -940,7 +1047,9 @@ jobs:
           echo
           echo "Tailscale IP:"
 
-          "$TAILSCALE_BIN" ip -4 \
+          "$TAILSCALE_BIN" \
+            --socket=/var/run/tailscaled.sock \
+            ip -4 \
             2>/dev/null || true
 
           echo
@@ -976,6 +1085,15 @@ jobs:
             echo "TIME: $(date)"
             echo "CONSOLE USER: $(stat -f "%Su" /dev/console)"
             echo "=================================================="
+
+            echo
+            echo "Tailscale IP:"
+
+            timeout 10 \
+              /usr/local/bin/tailscale \
+              --socket=/var/run/tailscaled.sock \
+              ip -4 \
+              || true
 
             echo
             echo "macrdp:"
@@ -1017,6 +1135,9 @@ jobs:
           pkill -f '/usr/local/bin/macrdp' \
             2>/dev/null || true
 
+          pkill -f tailscaled \
+            2>/dev/null || true
+
           TARGET_UID=$(id -u "$MACOS_USERNAME" 2>/dev/null || true)
 
           if [ -n "$TARGET_UID" ]; then
@@ -1030,9 +1151,6 @@ jobs:
 
           echo
           echo "Cleanup complete."
-
-          echo
-          echo "=================================================="
 
 
       # =========================================================
