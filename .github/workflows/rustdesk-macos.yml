@@ -60,8 +60,10 @@ jobs:
           echo "=================================================="
 
           if id "$MACOS_USERNAME" >/dev/null 2>&1; then
+
             echo "User already exists:"
             id "$MACOS_USERNAME"
+
           else
 
             echo "Creating user..."
@@ -166,7 +168,7 @@ jobs:
 
           if [ -d "/Applications/Tailscale.app" ]; then
 
-            echo "Tailscale.app already installed."
+            echo "Tailscale.app already exists."
 
           else
 
@@ -184,11 +186,11 @@ jobs:
               -o "$TAILSCALE_PKG"
 
             echo
-            echo "Downloaded:"
+            echo "Package downloaded:"
             ls -lh "$TAILSCALE_PKG"
 
             echo
-            echo "Installing..."
+            echo "Installing Tailscale..."
 
             sudo installer \
               -pkg "$TAILSCALE_PKG" \
@@ -197,69 +199,90 @@ jobs:
           fi
 
           echo
-          echo "Checking installation..."
-
-          test -d "/Applications/Tailscale.app"
-
-          echo "Tailscale.app FOUND."
+          echo "Installation completed."
 
           echo
           echo "=================================================="
 
 
       # =========================================================
-      # 6. LOCATE TAILSCALE COMPONENTS
+      # 6. DISCOVER TAILSCALE FILES
       # =========================================================
-      - name: Locate Tailscale Components
+      - name: Discover Tailscale Installation
         shell: bash
         run: |
-          set -e
+          set +e
 
           echo "=================================================="
-          echo "LOCATING TAILSCALE COMPONENTS"
+          echo "DISCOVERING TAILSCALE INSTALLATION"
           echo "=================================================="
 
           echo
-          echo "Tailscale.app contents:"
+          echo "Applications:"
+          ls -lah /Applications/Tailscale.app \
+            2>/dev/null || true
 
+          echo
+          echo "Contents:"
           find \
-            "/Applications/Tailscale.app/Contents" \
-            -maxdepth 4 \
+            /Applications/Tailscale.app/Contents \
+            -maxdepth 5 \
             -type f \
             2>/dev/null \
-            | grep -E \
-              'tailscale$|tailscaled$|Tailscale$' \
+            | sort \
             || true
 
           echo
-          echo "Checking expected binaries..."
-
-          if [ -x "/usr/local/bin/tailscale" ]; then
-            echo "tailscale CLI:"
-            ls -l /usr/local/bin/tailscale
-          fi
-
-          if [ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]; then
-            echo "GUI CLI:"
-            ls -l \
-              "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-          fi
-
-          if [ -x "/Applications/Tailscale.app/Contents/MacOS/tailscaled" ]; then
-            echo "tailscaled:"
-            ls -l \
-              "/Applications/Tailscale.app/Contents/MacOS/tailscaled"
-          fi
-
-          echo
-          echo "Searching for tailscaled:"
+          echo "Executable files:"
 
           find \
-            "/Applications/Tailscale.app" \
-            -name "tailscaled" \
+            /Applications/Tailscale.app \
             -type f \
             -perm -111 \
             2>/dev/null \
+            | sort \
+            || true
+
+          echo
+          echo "tailscale files on system:"
+
+          find \
+            /usr/local \
+            /usr/bin \
+            /opt \
+            /Applications \
+            -name "tailscale" \
+            -o \
+            -name "tailscaled" \
+            2>/dev/null \
+            | sort \
+            || true
+
+          echo
+          echo "PATH lookup:"
+
+          which tailscale \
+            2>/dev/null || true
+
+          which tailscaled \
+            2>/dev/null || true
+
+          echo
+          echo "LaunchDaemons containing tailscale:"
+
+          ls -lah \
+            /Library/LaunchDaemons \
+            2>/dev/null \
+            | grep -i tailscale \
+            || true
+
+          echo
+          echo "LaunchAgents containing tailscale:"
+
+          ls -lah \
+            /Library/LaunchAgents \
+            2>/dev/null \
+            | grep -i tailscale \
             || true
 
           echo
@@ -267,137 +290,134 @@ jobs:
 
 
       # =========================================================
-      # 7. START TAILSCALED MANUALLY
+      # 7. FIND TAILSCALED
       # =========================================================
-      - name: Start Tailscale Daemon
+      - name: Find Tailscale Daemon
         shell: bash
         run: |
-          set -e
+          set +e
 
           echo "=================================================="
-          echo "STARTING TAILSCALE DAEMON"
+          echo "FINDING TAILSCALED"
           echo "=================================================="
 
           TAILSCALED=""
 
-          if [ -x "/Applications/Tailscale.app/Contents/MacOS/tailscaled" ]; then
+          CANDIDATES=(
 
-            TAILSCALED="/Applications/Tailscale.app/Contents/MacOS/tailscaled"
+            "/usr/local/bin/tailscaled"
 
-          elif [ -x "/usr/local/bin/tailscaled" ]; then
+            "/usr/local/sbin/tailscaled"
 
-            TAILSCALED="/usr/local/bin/tailscaled"
+            "/opt/homebrew/bin/tailscaled"
 
-          else
+            "/opt/homebrew/sbin/tailscaled"
 
-            TAILSCALED=$(find \
-              "/Applications/Tailscale.app" \
-              -name "tailscaled" \
-              -type f \
-              -perm -111 \
-              2>/dev/null \
-              | head -1)
+            "/Applications/Tailscale.app/Contents/MacOS/tailscaled"
 
-          fi
+            "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 
-          if [ -z "$TAILSCALED" ]; then
+          )
 
-            echo "ERROR: tailscaled was not found."
+          for CANDIDATE in "${CANDIDATES[@]}"; do
 
-            exit 1
-
-          fi
-
-          echo
-          echo "tailscaled:"
-          echo "$TAILSCALED"
-
-          echo
-          echo "Creating state directory..."
-
-          sudo mkdir -p /var/lib/tailscale
-
-          sudo chmod 700 /var/lib/tailscale
-
-          echo
-          echo "Starting daemon..."
-
-          sudo pkill -f tailscaled \
-            2>/dev/null || true
-
-          sleep 2
-
-          sudo "$TAILSCALED" \
-            --state=/var/lib/tailscale/tailscaled.state \
-            --socket=/var/run/tailscaled.sock \
-            > /tmp/tailscaled.stdout.log \
-            2> /tmp/tailscaled.stderr.log &
-
-          TAILSCALED_PID=$!
-
-          echo
-          echo "tailscaled PID:"
-          echo "$TAILSCALED_PID"
-
-          echo
-          echo "Waiting for daemon socket..."
-
-          DAEMON_READY=0
-
-          for i in {1..30}; do
-
-            if [ -S /var/run/tailscaled.sock ]; then
+            if [ -x "$CANDIDATE" ]; then
 
               echo
-              echo "Tailscale daemon socket FOUND."
+              echo "FOUND:"
+              echo "$CANDIDATE"
 
-              DAEMON_READY=1
+              TAILSCALED="$CANDIDATE"
 
               break
 
             fi
 
-            echo "Waiting... $i/30"
-
-            sleep 1
-
           done
 
-          if [ "$DAEMON_READY" -ne 1 ]; then
+          if [ -z "$TAILSCALED" ]; then
 
             echo
-            echo "ERROR: tailscaled socket was not created."
+            echo "tailscaled was not found in standard locations."
 
             echo
-            echo "tailscaled stdout:"
-            cat /tmp/tailscaled.stdout.log || true
+            echo "Searching entire filesystem."
+
+            FOUND=$(sudo find \
+              / \
+              -type f \
+              -name "tailscaled" \
+              -perm -111 \
+              2>/dev/null \
+              | head -20)
 
             echo
-            echo "tailscaled stderr:"
-            cat /tmp/tailscaled.stderr.log || true
+            echo "$FOUND"
+
+            if [ -n "$FOUND" ]; then
+
+              TAILSCALED=$(echo "$FOUND" | head -1)
+
+              echo
+              echo "Using discovered daemon:"
+              echo "$TAILSCALED"
+
+            fi
+
+          fi
+
+          if [ -z "$TAILSCALED" ]; then
 
             echo
-            echo "tailscaled process:"
-            ps aux | grep '[t]ailscaled' || true
+            echo "=================================================="
+            echo "NO TAILSCALED FOUND"
+            echo "=================================================="
+
+            echo
+            echo "Installed Tailscale package information:"
+
+            pkgutil --pkgs \
+              | grep -i tailscale \
+              || true
+
+            echo
+            echo "Tailscale app information:"
+
+            /usr/libexec/PlistBuddy \
+              -c "Print :CFBundleShortVersionString" \
+              "/Applications/Tailscale.app/Contents/Info.plist" \
+              2>/dev/null \
+              || true
+
+            echo
+            echo "=================================================="
 
             exit 1
 
           fi
 
           echo
+          echo "tailscaled path:"
+          echo "$TAILSCALED"
+
+          echo
+          echo "File:"
+          file "$TAILSCALED"
+
+          echo
           echo "=================================================="
 
 
       # =========================================================
-      # 8. VERIFY TAILSCALE CLI
+      # 8. TAILSCALE CLI
       # =========================================================
-      - name: Verify Tailscale CLI
+      - name: Locate Tailscale CLI
         shell: bash
         run: |
           set -e
 
           echo "=================================================="
-          echo "VERIFYING TAILSCALE CLI"
+          echo "LOCATING TAILSCALE CLI"
           echo "=================================================="
 
           if [ -x "/usr/local/bin/tailscale" ]; then
@@ -417,26 +437,21 @@ jobs:
           fi
 
           echo
-          echo "CLI:"
+          echo "Tailscale CLI:"
           echo "$TAILSCALE_BIN"
 
           echo
-          echo "Running version with daemon socket..."
-
-          timeout 10 \
-            "$TAILSCALE_BIN" \
-            --socket=/var/run/tailscaled.sock \
-            version \
-            || true
+          echo "File:"
+          file "$TAILSCALE_BIN"
 
           echo
           echo "=================================================="
 
 
       # =========================================================
-      # 9. AUTHENTICATE TAILSCALE
+      # 9. START TAILSCALE
       # =========================================================
-      - name: Authenticate Tailscale
+      - name: Start Tailscale
         shell: bash
         env:
           TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
@@ -444,7 +459,7 @@ jobs:
           set +e
 
           echo "=================================================="
-          echo "AUTHENTICATING TAILSCALE"
+          echo "STARTING TAILSCALE"
           echo "=================================================="
 
           TAILSCALE_BIN="/usr/local/bin/tailscale"
@@ -454,45 +469,46 @@ jobs:
           fi
 
           echo
-          echo "Using:"
+          echo "CLI:"
           echo "$TAILSCALE_BIN"
 
           echo
-          echo "Daemon socket:"
-          ls -l /var/run/tailscaled.sock
+          echo "Checking existing Tailscale processes:"
+
+          ps aux | grep -i '[t]ailscale' || true
 
           echo
-          echo "Running tailscale up..."
+          echo "Checking Tailscale LaunchDaemons:"
+
+          sudo launchctl list \
+            | grep -i tailscale \
+            || true
+
+          echo
+          echo "Attempting authentication."
 
           rm -f /tmp/tailscale-up.stdout
           rm -f /tmp/tailscale-up.stderr
 
           (
             sudo "$TAILSCALE_BIN" \
-              --socket=/var/run/tailscaled.sock \
               up \
               --authkey="$TAILSCALE_AUTH_KEY" \
-              --hostname="github-macos-rdp" \
-              > /tmp/tailscale-up.stdout \
-              2> /tmp/tailscale-up.stderr
-          ) &
+              --hostname="github-macos-rdp"
+          ) \
+            > /tmp/tailscale-up.stdout \
+            2> /tmp/tailscale-up.stderr &
 
-          TAILSCALE_PID=$!
+          PID=$!
 
           echo
-          echo "PID:"
-          echo "$TAILSCALE_PID"
-
-          FINISHED=0
+          echo "tailscale PID:"
+          echo "$PID"
 
           for i in {1..60}; do
 
-            if ! kill -0 "$TAILSCALE_PID" 2>/dev/null; then
-
-              FINISHED=1
-
+            if ! kill -0 "$PID" 2>/dev/null; then
               break
-
             fi
 
             echo "Waiting... $i/60"
@@ -501,28 +517,25 @@ jobs:
 
           done
 
-          if [ "$FINISHED" -eq 0 ]; then
+          if kill -0 "$PID" 2>/dev/null; then
 
             echo
-            echo "ERROR: tailscale up timed out after 60 seconds."
+            echo "ERROR: Tailscale is still running after 60 seconds."
 
-            kill "$TAILSCALE_PID" \
-              2>/dev/null || true
+            kill "$PID" 2>/dev/null || true
 
             sleep 2
 
-            kill -9 "$TAILSCALE_PID" \
-              2>/dev/null || true
+            kill -9 "$PID" 2>/dev/null || true
 
           fi
 
-          wait "$TAILSCALE_PID" \
-            2>/dev/null
+          wait "$PID" 2>/dev/null
 
           EXIT_CODE=$?
 
           echo
-          echo "tailscale up exit code:"
+          echo "Exit code:"
           echo "$EXIT_CODE"
 
           echo
@@ -543,27 +556,23 @@ jobs:
 
           echo
           echo "=================================================="
-          echo "TAILSCALED STDOUT"
-          echo "=================================================="
-
-          cat /tmp/tailscaled.stdout.log \
-            2>/dev/null || true
-
-          echo
-          echo "=================================================="
-          echo "TAILSCALED STDERR"
-          echo "=================================================="
-
-          cat /tmp/tailscaled.stderr.log \
-            2>/dev/null || true
-
-          echo
-          echo "=================================================="
 
           if [ "$EXIT_CODE" -ne 0 ]; then
 
             echo
-            echo "Tailscale authentication failed."
+            echo "Tailscale did not start successfully."
+
+            echo
+            echo "Current processes:"
+
+            ps aux | grep -i '[t]ailscale' || true
+
+            echo
+            echo "Launch services:"
+
+            sudo launchctl list \
+              | grep -i tailscale \
+              || true
 
             exit "$EXIT_CODE"
 
@@ -574,15 +583,15 @@ jobs:
 
 
       # =========================================================
-      # 10. VERIFY TAILSCALE NETWORK
+      # 10. VERIFY TAILSCALE
       # =========================================================
-      - name: Verify Tailscale Network
+      - name: Verify Tailscale
         shell: bash
         run: |
           set +e
 
           echo "=================================================="
-          echo "VERIFYING TAILSCALE NETWORK"
+          echo "VERIFYING TAILSCALE"
           echo "=================================================="
 
           TAILSCALE_BIN="/usr/local/bin/tailscale"
@@ -594,27 +603,19 @@ jobs:
           echo
           echo "Status:"
 
-          timeout 15 \
-            "$TAILSCALE_BIN" \
-            --socket=/var/run/tailscaled.sock \
-            status \
-            || true
+          "$TAILSCALE_BIN" status \
+            2>&1 || true
 
           echo
           echo "IPv4:"
 
-          timeout 15 \
-            "$TAILSCALE_BIN" \
-            --socket=/var/run/tailscaled.sock \
-            ip -4 \
-            || true
+          "$TAILSCALE_BIN" ip -4 \
+            2>&1 || true
 
           echo
-          echo "Interfaces:"
+          echo "Processes:"
 
-          ifconfig \
-            | grep -A5 -B2 -i tailscale \
-            || true
+          ps aux | grep -i '[t]ailscale' || true
 
           echo
           echo "=================================================="
@@ -646,7 +647,6 @@ jobs:
           source "$HOME/.cargo/env"
 
           rustc --version
-
           cargo --version
 
           echo
@@ -735,34 +735,9 @@ jobs:
 
 
       # =========================================================
-      # 15. OPEN MACOS PERMISSIONS
+      # 15. PREPARE MACRDP
       # =========================================================
-      - name: Open macOS Permissions
-        shell: bash
-        run: |
-          echo "=================================================="
-          echo "OPENING MACOS PERMISSIONS"
-          echo "=================================================="
-
-          open \
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" \
-            || true
-
-          open \
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" \
-            || true
-
-          echo
-          echo "Permission settings opened."
-
-          echo
-          echo "=================================================="
-
-
-      # =========================================================
-      # 16. PREPARE MACRDP DIRECTORIES
-      # =========================================================
-      - name: Prepare macrdp Logs
+      - name: Prepare macrdp
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
@@ -789,11 +764,11 @@ jobs:
             "$TARGET_HOME/Library/LaunchAgents"
 
           echo
-          echo "Directories ready."
+          echo "macrdp directories ready."
 
 
       # =========================================================
-      # 17. CREATE MACRDP LAUNCHAGENT
+      # 16. CREATE MACRDP LAUNCHAGENT
       # =========================================================
       - name: Create macrdp LaunchAgent
         shell: bash
@@ -924,11 +899,11 @@ jobs:
             "$TARGET_HOME/Library/LaunchAgents/com.macrdp.server.plist"
 
           echo
-          echo "LaunchAgent ready."
+          echo "LaunchAgent created."
 
 
       # =========================================================
-      # 18. START MACRDP
+      # 17. START MACRDP
       # =========================================================
       - name: Start macrdp
         shell: bash
@@ -960,9 +935,15 @@ jobs:
             "gui/$TARGET_UID" \
             "$TARGET_HOME/Library/LaunchAgents/com.macrdp.server.plist"
 
+          BOOTSTRAP=$?
+
           echo
-          echo "Bootstrap exit:"
-          echo "$?"
+          echo "Bootstrap:"
+          echo "$BOOTSTRAP"
+
+          if [ "$BOOTSTRAP" -ne 0 ]; then
+            exit "$BOOTSTRAP"
+          fi
 
           sudo -u "$MACOS_USERNAME" \
             launchctl kickstart \
@@ -991,7 +972,7 @@ jobs:
 
           echo
           echo "=================================================="
-          echo "SERVICE STATUS"
+          echo "SERVICE"
           echo "=================================================="
 
           sudo -u "$MACOS_USERNAME" \
@@ -1025,7 +1006,7 @@ jobs:
 
 
       # =========================================================
-      # 19. CONNECTION INFORMATION
+      # 18. CONNECTION INFORMATION
       # =========================================================
       - name: Connection Information
         shell: bash
@@ -1048,7 +1029,6 @@ jobs:
           echo "Tailscale IP:"
 
           "$TAILSCALE_BIN" \
-            --socket=/var/run/tailscaled.sock \
             ip -4 \
             2>/dev/null || true
 
@@ -1065,7 +1045,7 @@ jobs:
 
 
       # =========================================================
-      # 20. KEEP RUNNER ALIVE
+      # 19. KEEP RUNNER ALIVE
       # =========================================================
       - name: Keep Runner Alive
         shell: bash
@@ -1087,19 +1067,18 @@ jobs:
             echo "=================================================="
 
             echo
-            echo "Tailscale IP:"
+            echo "Tailscale:"
 
             timeout 10 \
               /usr/local/bin/tailscale \
-              --socket=/var/run/tailscaled.sock \
-              ip -4 \
-              || true
+              status \
+              2>&1 || true
 
             echo
             echo "macrdp:"
 
-            ps aux | grep '[m]acrdp' || \
-              echo "macrdp not running"
+            ps aux | grep '[m]acrdp' \
+              || echo "macrdp not running"
 
             echo
             echo "Port 3390:"
@@ -1113,14 +1092,9 @@ jobs:
 
           done
 
-          echo
-          echo "=================================================="
-          echo "KEEP-ALIVE FINISHED"
-          echo "=================================================="
-
 
       # =========================================================
-      # 21. CLEANUP
+      # 20. CLEANUP
       # =========================================================
       - name: Cleanup
         if: always()
@@ -1154,7 +1128,7 @@ jobs:
 
 
       # =========================================================
-      # 22. FINAL
+      # 21. FINAL
       # =========================================================
       - name: Final
         if: always()
