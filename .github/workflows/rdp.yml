@@ -1,40 +1,635 @@
-name: VNC + Tailscale
+name: Ubuntu RustDesk - Abdulrahman
+
 on:
   workflow_dispatch:
+
 jobs:
-  vnc:
+  ubuntu:
     runs-on: ubuntu-latest
     timeout-minutes: 360
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Setup Tailscale
+
+      # =========================================================
+      # 1. SYSTEM INFORMATION
+      # =========================================================
+      - name: System Information
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " SYSTEM INFORMATION"
+          echo "=========================================="
+
+          echo ""
+          echo "Ubuntu:"
+          cat /etc/os-release
+
+          echo ""
+          echo "Kernel:"
+          uname -a
+
+          echo ""
+          echo "Architecture:"
+          uname -m
+
+          echo ""
+          echo "Actions user:"
+          whoami
+
+          echo ""
+          echo "UID:"
+          id -u
+
+          echo ""
+          echo "Logged users:"
+          who || true
+
+          echo ""
+          echo "Systemd:"
+          systemctl --version | head -1 || true
+
+
+      # =========================================================
+      # 2. CREATE ABDULRAHMAN
+      # =========================================================
+      - name: Create Abdulrahman
+        shell: bash
         env:
-          TS_KEY: ${{ secrets.TS_AUTHKEY }}
-        run: |
-          echo -n "$TS_KEY" | tr -d ' \r\n' > /tmp/tskey
-          curl -fsSL https://tailscale.com/install.sh | sh
-          sudo tailscale up --authkey=file:/tmp/tskey --hostname=gh-vnc-$(date +%s)
-          rm -f /tmp/tskey
-          echo "IP: $(tailscale ip -4)"
+          UBUNTU_USERNAME: ${{ secrets.UBUNTU_USERNAME }}
+          UBUNTU_PASSWORD: ${{ secrets.UBUNTU_PASSWORD }}
 
-      - name: Install Desktop + VNC
         run: |
+          set -e
+
+          echo "=========================================="
+          echo " CREATING ABDULRAHMAN"
+          echo "=========================================="
+
+          if [ -z "$UBUNTU_USERNAME" ]; then
+            echo "ERROR: UBUNTU_USERNAME is empty."
+            exit 1
+          fi
+
+          if [ -z "$UBUNTU_PASSWORD" ]; then
+            echo "ERROR: UBUNTU_PASSWORD is empty."
+            exit 1
+          fi
+
+          if [[ ! "$UBUNTU_USERNAME" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+            echo "ERROR: Invalid username."
+            exit 1
+          fi
+
+          echo ""
+          echo "Username:"
+          echo "$UBUNTU_USERNAME"
+
+          if id "$UBUNTU_USERNAME" >/dev/null 2>&1; then
+
+            echo ""
+            echo "User already exists."
+
+            echo ""
+            echo "Updating password..."
+
+            echo "$UBUNTU_USERNAME:$UBUNTU_PASSWORD" | \
+              sudo chpasswd
+
+          else
+
+            echo ""
+            echo "Creating user..."
+
+            sudo useradd \
+              --create-home \
+              --shell /bin/bash \
+              "$UBUNTU_USERNAME"
+
+            echo "$UBUNTU_USERNAME:$UBUNTU_PASSWORD" | \
+              sudo chpasswd
+
+            echo "User created."
+
+          fi
+
+          echo ""
+          echo "Adding Administrator privileges..."
+
+          sudo usermod \
+            --append \
+            --groups sudo \
+            "$UBUNTU_USERNAME"
+
+          echo ""
+          echo "User ID:"
+          id "$UBUNTU_USERNAME"
+
+          echo ""
+          echo "Groups:"
+          id -Gn "$UBUNTU_USERNAME"
+
+
+      # =========================================================
+      # 3. VERIFY ABDULRAHMAN
+      # =========================================================
+      - name: Verify Abdulrahman
+        shell: bash
+        env:
+          UBUNTU_USERNAME: ${{ secrets.UBUNTU_USERNAME }}
+
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " VERIFYING ABDULRAHMAN"
+          echo "=========================================="
+
+          echo ""
+          echo "whoami:"
+          sudo -u "$UBUNTU_USERNAME" whoami
+
+          echo ""
+          echo "UID:"
+          id -u "$UBUNTU_USERNAME"
+
+          echo ""
+          echo "Groups:"
+          id -Gn "$UBUNTU_USERNAME"
+
+          echo ""
+          echo "Home:"
+          getent passwd "$UBUNTU_USERNAME" | cut -d: -f6
+
+          echo ""
+          echo "Checking Administrator membership..."
+
+          if id -nG "$UBUNTU_USERNAME" | \
+             tr ' ' '\n' | \
+             grep -qx "sudo"; then
+
+            echo ""
+            echo "SUCCESS: Abdulrahman is an Administrator."
+
+          else
+
+            echo ""
+            echo "ERROR: Abdulrahman is NOT an Administrator."
+            exit 1
+
+          fi
+
+
+      # =========================================================
+      # 4. INSTALL UBUNTU DESKTOP
+      # =========================================================
+      - name: Install Ubuntu Desktop
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " INSTALLING UBUNTU DESKTOP"
+          echo "=========================================="
+
           sudo apt-get update
-          sudo apt-get install -y xfce4 xfce4-goodies xfce4-session dbus-x11 tigervnc-standalone-server tigervnc-common novnc websockify
-          sudo useradd -m -s /bin/bash vncuser || true
-          echo "vncuser:123456" | sudo chpasswd
-          sudo usermod -aG sudo vncuser || true
-          sudo -u vncuser mkdir -p /home/vncuser/.vnc
-          echo "123456" | sudo -u vncuser vncpasswd -f > /home/vncuser/.vnc/passwd
-          sudo chmod 600 /home/vncuser/.vnc/passwd
-          printf '#!/bin/sh\nunset SESSION_MANAGER\nunset DBUS_SESSION_BUS_ADDRESS\nunset XDG_RUNTIME_DIR\nexec startxfce4\n' | sudo -u vncuser tee /home/vncuser/.vnc/xstartup
-          sudo chmod +x /home/vncuser/.vnc/xstartup
-          sudo -u vncuser vncserver :1 -geometry 1280x800 -depth 24 -localhost no
-          sudo -u vncuser websockify -D --web=/usr/share/novnc 6080 localhost:5901
-          sleep 3
-          ps aux | grep vnc || true
-          echo "VNC Started"
 
+          sudo DEBIAN_FRONTEND=noninteractive \
+            apt-get install -y \
+            ubuntu-desktop-minimal \
+            gdm3 \
+            dbus-x11 \
+            x11-xserver-utils \
+            xserver-xorg \
+            xserver-xorg-core
+
+          echo ""
+          echo "Ubuntu Desktop installed."
+
+
+      # =========================================================
+      # 5. CONFIGURE GDM + X11
+      # =========================================================
+      - name: Configure GDM X11
+        shell: bash
+        env:
+          UBUNTU_USERNAME: ${{ secrets.UBUNTU_USERNAME }}
+
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " CONFIGURING GDM + X11"
+          echo "=========================================="
+
+          GDM_CONFIG="/etc/gdm3/custom.conf"
+
+          sudo mkdir -p /etc/gdm3
+
+          if [ ! -f "$GDM_CONFIG" ]; then
+            sudo touch "$GDM_CONFIG"
+          fi
+
+          echo ""
+          echo "Disabling Wayland..."
+
+          if sudo grep -q "^WaylandEnable=" "$GDM_CONFIG"; then
+
+            sudo sed -i \
+              's/^WaylandEnable=.*/WaylandEnable=false/' \
+              "$GDM_CONFIG"
+
+          else
+
+            echo "WaylandEnable=false" | \
+              sudo tee -a "$GDM_CONFIG" >/dev/null
+
+          fi
+
+          echo ""
+          echo "Configuring automatic login..."
+
+          sudo tee "$GDM_CONFIG" >/dev/null <<EOF
+          [daemon]
+          WaylandEnable=false
+          AutomaticLoginEnable=true
+          AutomaticLogin=$UBUNTU_USERNAME
+          EOF
+
+          echo ""
+          echo "GDM configuration:"
+          sudo cat "$GDM_CONFIG"
+
+
+      # =========================================================
+      # 6. INSTALL RUSTDESK
+      # =========================================================
+      - name: Install RustDesk
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " INSTALLING RUSTDESK"
+          echo "=========================================="
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            wget \
+            curl \
+            ca-certificates
+
+          echo ""
+          echo "Downloading RustDesk..."
+
+          wget \
+            --show-progress \
+            -O /tmp/rustdesk.deb \
+            https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk-x86_64.deb
+
+          echo ""
+          echo "Installing RustDesk..."
+
+          sudo apt-get install -fy \
+            /tmp/rustdesk.deb
+
+          echo ""
+          echo "RustDesk version:"
+
+          rustdesk --version || true
+
+          echo ""
+          echo "RustDesk location:"
+
+          command -v rustdesk
+
+
+      # =========================================================
+      # 7. CONFIGURE RUSTDESK
+      # =========================================================
+      - name: Configure RustDesk
+        shell: bash
+        env:
+          RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
+
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " CONFIGURING RUSTDESK"
+          echo "=========================================="
+
+          if [ -z "$RUSTDESK_PASSWORD" ]; then
+            echo "ERROR: RUSTDESK_PASSWORD is empty."
+            exit 1
+          fi
+
+          echo ""
+          echo "Starting RustDesk..."
+
+          sudo systemctl enable rustdesk \
+            || true
+
+          sudo systemctl start rustdesk \
+            || true
+
+          sleep 10
+
+          echo ""
+          echo "RustDesk service:"
+
+          sudo systemctl status rustdesk \
+            --no-pager \
+            || true
+
+          echo ""
+          echo "Getting RustDesk ID..."
+
+          ID=$(
+            rustdesk \
+              --get-id \
+              2>/dev/null || true
+          )
+
+          echo "$ID"
+
+          echo ""
+          echo "Setting permanent password..."
+
+          PASSWORD_OUTPUT=$(
+            sudo rustdesk \
+              --password "$RUSTDESK_PASSWORD" \
+              2>&1 || true
+          )
+
+          echo "$PASSWORD_OUTPUT"
+
+          echo ""
+          echo "Restarting RustDesk..."
+
+          sudo systemctl restart rustdesk \
+            || true
+
+          sleep 10
+
+          FINAL_ID=$(
+            rustdesk \
+              --get-id \
+              2>/dev/null || true
+          )
+
+          echo ""
+          echo "=========================================="
+          echo " RUSTDESK READY"
+          echo "=========================================="
+
+          echo ""
+          echo "RustDesk ID:"
+          echo "$FINAL_ID"
+
+          echo ""
+          echo "RustDesk password configured."
+
+
+      # =========================================================
+      # 8. START GDM
+      # =========================================================
+      - name: Start Graphical Environment
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " STARTING GRAPHICAL ENVIRONMENT"
+          echo "=========================================="
+
+          sudo systemctl enable gdm3 \
+            || true
+
+          sudo systemctl restart gdm3 \
+            || true
+
+          sleep 15
+
+          echo ""
+          echo "GDM status:"
+
+          sudo systemctl status gdm3 \
+            --no-pager \
+            || true
+
+          echo ""
+          echo "Display manager:"
+
+          systemctl status display-manager \
+            --no-pager \
+            2>/dev/null || true
+
+
+      # =========================================================
+      # 9. START RUSTDESK FOR ABDULRAHMAN
+      # =========================================================
+      - name: Start RustDesk As Abdulrahman
+        shell: bash
+        env:
+          UBUNTU_USERNAME: ${{ secrets.UBUNTU_USERNAME }}
+
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " STARTING RUSTDESK AS ABDULRAHMAN"
+          echo "=========================================="
+
+          HOME_DIR="/home/$UBUNTU_USERNAME"
+
+          echo ""
+          echo "User:"
+          echo "$UBUNTU_USERNAME"
+
+          echo ""
+          echo "Home:"
+          echo "$HOME_DIR"
+
+          sudo -u "$UBUNTU_USERNAME" \
+            env \
+            HOME="$HOME_DIR" \
+            USER="$UBUNTU_USERNAME" \
+            LOGNAME="$UBUNTU_USERNAME" \
+            nohup rustdesk \
+            >/tmp/rustdesk-abdulrahman.log 2>&1 &
+
+          sleep 10
+
+          echo ""
+          echo "RustDesk processes:"
+
+          pgrep -af rustdesk || true
+
+          echo ""
+          echo "RustDesk owned by Abdulrahman:"
+
+          ps aux | \
+            grep "$UBUNTU_USERNAME" | \
+            grep -i rustdesk || true
+
+          echo ""
+          echo "RustDesk log:"
+
+          tail -50 \
+            /tmp/rustdesk-abdulrahman.log \
+            2>/dev/null || true
+
+
+      # =========================================================
+      # 10. VERIFY RUSTDESK
+      # =========================================================
+      - name: Verify RustDesk
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo " VERIFYING RUSTDESK"
+          echo "=========================================="
+
+          echo ""
+          echo "RustDesk executable:"
+
+          command -v rustdesk || true
+
+          echo ""
+          echo "RustDesk version:"
+
+          rustdesk --version || true
+
+          echo ""
+          echo "RustDesk ID:"
+
+          rustdesk --get-id \
+            2>/dev/null || true
+
+          echo ""
+          echo "RustDesk processes:"
+
+          pgrep -af rustdesk || true
+
+          echo ""
+          echo "RustDesk service:"
+
+          sudo systemctl status rustdesk \
+            --no-pager \
+            2>/dev/null || true
+
+
+      # =========================================================
+      # 11. FINAL CHECK
+      # =========================================================
+      - name: Final Check
+        shell: bash
+        env:
+          UBUNTU_USERNAME: ${{ secrets.UBUNTU_USERNAME }}
+
+        run: |
+          echo "=========================================="
+          echo " FINAL CHECK"
+          echo "=========================================="
+
+          echo ""
+          echo "OS:"
+          grep PRETTY_NAME /etc/os-release
+
+          echo ""
+          echo "Architecture:"
+          uname -m
+
+          echo ""
+          echo "Actions user:"
+          whoami
+
+          echo ""
+          echo "Logged users:"
+          who || true
+
+          echo ""
+          echo "Abdulrahman:"
+          id "$UBUNTU_USERNAME"
+
+          echo ""
+          echo "Abdulrahman groups:"
+          id -Gn "$UBUNTU_USERNAME"
+
+          echo ""
+          echo "RustDesk ID:"
+          rustdesk --get-id \
+            2>/dev/null || true
+
+          echo ""
+          echo "RustDesk:"
+          pgrep -af rustdesk || true
+
+          echo ""
+          echo "GDM:"
+          sudo systemctl is-active gdm3 \
+            || true
+
+          echo ""
+          echo "X11:"
+          pgrep -af Xorg \
+            || true
+
+
+      # =========================================================
+      # 12. KEEP RUNNER ALIVE
+      # =========================================================
+      - name: Keep Runner Alive
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo " RUNNER IS ONLINE"
+          echo "=========================================="
+
+          while true
+          do
+            echo ""
+            echo "=========================================="
+            echo "[$(date)] Runner alive"
+            echo "=========================================="
+
+            echo ""
+            echo "Logged users:"
+            who || true
+
+            echo ""
+            echo "Sessions:"
+            loginctl list-sessions \
+              2>/dev/null || true
+
+            echo ""
+            echo "RustDesk ID:"
+            rustdesk --get-id \
+              2>/dev/null || true
+
+            echo ""
+            echo "RustDesk:"
+            pgrep -af rustdesk || true
+
+            echo ""
+            echo "RustDesk service:"
+            systemctl is-active rustdesk \
+              2>/dev/null || true
+
+            echo ""
+            echo "GDM:"
+            systemctl is-active gdm3 \
+              2>/dev/null || true
+
+            echo ""
+            echo "Xorg:"
+            pgrep -af Xorg || true
+
+            sleep 300
+          done
       - name: Keep Alive
         run: |
           echo "=========================="
