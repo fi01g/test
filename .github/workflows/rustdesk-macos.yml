@@ -85,7 +85,7 @@ jobs:
         run: |
           set -e
 
-          echo "Adding $MACOS_USERNAME to admin group..."
+          echo "Adding user to admin group..."
 
           sudo dseditgroup \
             -o edit \
@@ -123,7 +123,7 @@ jobs:
             "$MACOS_USERNAME"
 
           echo
-          echo "Auto login user:"
+          echo "===== AUTO LOGIN ====="
 
           sudo defaults read \
             /Library/Preferences/com.apple.loginwindow \
@@ -220,7 +220,7 @@ jobs:
           sudo tailscale status
 
           echo
-          echo "===== TAILSCALE IPv4 ====="
+          echo "===== TAILSCALE IP ====="
 
           TAILSCALE_IP=$(tailscale ip -4 2>/dev/null | head -n 1)
 
@@ -258,8 +258,6 @@ jobs:
           echo "===== RUST ====="
 
           rustc --version
-
-          echo
           cargo --version
 
 
@@ -372,16 +370,16 @@ jobs:
           sleep 3
 
           echo
-          echo "===== CONSOLE USER ====="
+          echo "===== CURRENT CONSOLE USER ====="
 
           stat -f "%Su" /dev/console
 
 
       # =========================================================
-      # 12. Create macrdp LaunchAgent
+      # 12. Create LaunchAgent For MACOS_USERNAME
       # =========================================================
 
-      - name: Create macrdp LaunchAgent
+      - name: Create macrdp LaunchAgent For Target User
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
@@ -389,7 +387,7 @@ jobs:
         run: |
           set -e
 
-          echo "===== CREATE LAUNCHAGENT ====="
+          echo "===== TARGET USER LAUNCHAGENT ====="
 
           USER_HOME=$(dscl . -read \
             /Users/"$MACOS_USERNAME" NFSHomeDirectory \
@@ -402,7 +400,11 @@ jobs:
           LOG_DIR="$USER_HOME/Library/Logs/macrdp"
 
           echo
-          echo "User home:"
+          echo "User:"
+          echo "$MACOS_USERNAME"
+
+          echo
+          echo "Home:"
           echo "$USER_HOME"
 
           echo
@@ -414,7 +416,6 @@ jobs:
           echo "$LOG_DIR"
 
           sudo mkdir -p "$AGENT_DIR"
-
           sudo mkdir -p "$LOG_DIR"
 
           sudo chown \
@@ -426,11 +427,11 @@ jobs:
             "$LOG_DIR"
 
           echo
-          echo "Creating plist in /tmp..."
+          echo "Creating plist..."
 
           python3 \
             - "$MACOS_USERNAME" "$MACOS_PASSWORD" "$LOG_DIR" \
-            > /tmp/com.macrdp.server.plist <<'PY'
+            > /tmp/macrdp-target.plist <<'PY'
           import plistlib
           import sys
 
@@ -443,51 +444,37 @@ jobs:
 
               "ProgramArguments": [
                   "/usr/local/bin/macrdp",
-
                   "--bind",
                   "0.0.0.0:3390",
-
                   "--username",
                   username,
-
                   "--password",
                   password,
-
                   "--enable-h264",
-
                   "--fps",
                   "60",
-
                   "--bitrate",
                   "8",
-
                   "--keyframe-interval",
                   "2",
-
                   "--flush-frames",
                   "4",
-
                   "--log-dir",
                   log_dir,
-
                   "--verbose"
               ],
 
               "RunAtLoad": True,
-
               "KeepAlive": True,
-
               "ThrottleInterval": 5,
-
               "ProcessType": "Interactive",
+              "LimitLoadToSessionType": ["Aqua"],
 
-              "LimitLoadToSessionType": [
-                  "Aqua"
-              ],
+              "StandardOutPath":
+                  f"{log_dir}/stdout.log",
 
-              "StandardOutPath": f"{log_dir}/stdout.log",
-
-              "StandardErrorPath": f"{log_dir}/stderr.log"
+              "StandardErrorPath":
+                  f"{log_dir}/stderr.log"
           }
 
           plistlib.dump(
@@ -496,11 +483,8 @@ jobs:
           )
           PY
 
-          echo
-          echo "Moving plist..."
-
           sudo mv \
-            /tmp/com.macrdp.server.plist \
+            /tmp/macrdp-target.plist \
             "$AGENT"
 
           sudo chown \
@@ -511,25 +495,129 @@ jobs:
             "$AGENT"
 
           echo
-          echo "===== PLIST VALIDATION ====="
+          echo "===== TARGET PLIST ====="
 
-          sudo plutil \
-            -lint \
-            "$AGENT"
+          sudo plutil -p "$AGENT"
 
           echo
-          echo "===== PLIST CONTENT ====="
+          echo "===== VALIDATION ====="
 
-          sudo plutil \
-            -p \
-            "$AGENT"
-
-          echo
-          echo "===== LAUNCHAGENT CREATED ====="
+          sudo plutil -lint "$AGENT"
 
 
       # =========================================================
-      # 13. Stop Existing macrdp
+      # 13. Create LaunchAgent For GitHub Runner
+      # =========================================================
+
+      - name: Create macrdp LaunchAgent For Runner
+        shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+        run: |
+          set -e
+
+          echo "===== RUNNER LAUNCHAGENT ====="
+
+          RUNNER_USER=$(whoami)
+
+          RUNNER_HOME="$HOME"
+
+          RUNNER_AGENT_DIR="$RUNNER_HOME/Library/LaunchAgents"
+
+          RUNNER_AGENT="$RUNNER_AGENT_DIR/com.macrdp.server.plist"
+
+          RUNNER_LOG_DIR="$RUNNER_HOME/Library/Logs/macrdp"
+
+          echo
+          echo "Runner:"
+          echo "$RUNNER_USER"
+
+          echo
+          echo "Runner home:"
+          echo "$RUNNER_HOME"
+
+          echo
+          echo "Runner agent:"
+          echo "$RUNNER_AGENT"
+
+          mkdir -p "$RUNNER_AGENT_DIR"
+          mkdir -p "$RUNNER_LOG_DIR"
+
+          python3 \
+            - "$MACOS_USERNAME" "$MACOS_PASSWORD" "$RUNNER_LOG_DIR" \
+            > /tmp/macrdp-runner.plist <<'PY'
+          import plistlib
+          import sys
+
+          username = sys.argv[1]
+          password = sys.argv[2]
+          log_dir = sys.argv[3]
+
+          plist = {
+              "Label": "com.macrdp.server",
+
+              "ProgramArguments": [
+                  "/usr/local/bin/macrdp",
+                  "--bind",
+                  "0.0.0.0:3390",
+                  "--username",
+                  username,
+                  "--password",
+                  password,
+                  "--enable-h264",
+                  "--fps",
+                  "60",
+                  "--bitrate",
+                  "8",
+                  "--keyframe-interval",
+                  "2",
+                  "--flush-frames",
+                  "4",
+                  "--log-dir",
+                  log_dir,
+                  "--verbose"
+              ],
+
+              "RunAtLoad": True,
+              "KeepAlive": True,
+              "ThrottleInterval": 5,
+              "ProcessType": "Interactive",
+              "LimitLoadToSessionType": ["Aqua"],
+
+              "StandardOutPath":
+                  f"{log_dir}/stdout.log",
+
+              "StandardErrorPath":
+                  f"{log_dir}/stderr.log"
+          }
+
+          plistlib.dump(
+              plist,
+              sys.stdout.buffer
+          )
+          PY
+
+          mv \
+            /tmp/macrdp-runner.plist \
+            "$RUNNER_AGENT"
+
+          chmod 644 \
+            "$RUNNER_AGENT"
+
+          echo
+          echo "===== RUNNER PLIST ====="
+
+          plutil -p "$RUNNER_AGENT"
+
+          echo
+          echo "===== VALIDATION ====="
+
+          plutil -lint "$RUNNER_AGENT"
+
+
+      # =========================================================
+      # 14. Stop Existing macrdp
       # =========================================================
 
       - name: Stop Existing macrdp
@@ -546,16 +634,16 @@ jobs:
           sleep 2
 
           echo
-          echo "Remaining macrdp processes:"
+          echo "Remaining processes:"
 
           pgrep -fl macrdp || true
 
 
       # =========================================================
-      # 14. Start macrdp In GUI Session
+      # 15. Start macrdp For Current Console User
       # =========================================================
 
-      - name: Start macrdp GUI Session
+      - name: Start macrdp
         shell: bash
         run: |
           set +e
@@ -586,21 +674,25 @@ jobs:
             echo
             echo "Console user does not exist."
 
-            exit 1
+            exit 0
 
           fi
 
           CONSOLE_UID=$(id -u "$CONSOLE_USER")
 
-          USER_HOME=$(dscl . -read \
+          CONSOLE_HOME=$(dscl . -read \
             /Users/"$CONSOLE_USER" NFSHomeDirectory \
             | awk '{print $2}')
 
-          AGENT="$USER_HOME/Library/LaunchAgents/com.macrdp.server.plist"
+          AGENT="$CONSOLE_HOME/Library/LaunchAgents/com.macrdp.server.plist"
 
           echo
           echo "UID:"
           echo "$CONSOLE_UID"
+
+          echo
+          echo "Home:"
+          echo "$CONSOLE_HOME"
 
           echo
           echo "Agent:"
@@ -609,9 +701,14 @@ jobs:
           if [ ! -f "$AGENT" ]; then
 
             echo
-            echo "ERROR: LaunchAgent not found."
+            echo "WARNING:"
+            echo "LaunchAgent does not exist for $CONSOLE_USER."
 
-            exit 1
+            echo
+            echo "This should only happen if the console user"
+            echo "is a temporary system user."
+
+            exit 0
 
           fi
 
@@ -638,6 +735,7 @@ jobs:
           if [ "$BOOT_RESULT" -ne 0 ]; then
 
             echo
+            echo "WARNING:"
             echo "Bootstrap failed."
 
           fi
@@ -651,7 +749,7 @@ jobs:
             || true
 
           echo
-          echo "Starting service..."
+          echo "Kickstarting service..."
 
           sudo launchctl kickstart \
             -k \
@@ -684,7 +782,7 @@ jobs:
 
 
       # =========================================================
-      # 15. Monitor GUI User
+      # 16. Monitor User Switch
       # =========================================================
 
       - name: Monitor GUI User
@@ -694,18 +792,18 @@ jobs:
 
           echo
           echo "======================================================"
-          echo "          GUI USER MONITOR STARTED"
+          echo "             GUI USER MONITOR STARTED"
           echo "======================================================"
 
           LAST_USER=""
 
-          start_macrdp() {
+          start_macrdp_for_user() {
 
             TARGET_USER="$1"
 
             echo
             echo "=================================================="
-            echo "Starting macrdp for:"
+            echo "Starting macrdp for GUI user:"
             echo "$TARGET_USER"
             echo "=================================================="
 
@@ -730,19 +828,27 @@ jobs:
             echo "$TARGET_UID"
 
             echo
-            echo "Agent:"
+            echo "HOME:"
+            echo "$TARGET_HOME"
+
+            echo
+            echo "AGENT:"
             echo "$AGENT"
 
             if [ ! -f "$AGENT" ]; then
 
+              echo
               echo "LaunchAgent not found."
+
+              echo
+              echo "Cannot start macrdp for this GUI user."
 
               return
 
             fi
 
             echo
-            echo "Stopping old macrdp..."
+            echo "Stopping existing macrdp..."
 
             pkill \
               -f "/usr/local/bin/macrdp" \
@@ -751,7 +857,7 @@ jobs:
             sleep 2
 
             echo
-            echo "Booting out old service..."
+            echo "Removing old LaunchAgent instance..."
 
             sudo launchctl bootout \
               "gui/$TARGET_UID/com.macrdp.server" \
@@ -761,7 +867,7 @@ jobs:
             sleep 1
 
             echo
-            echo "Bootstrapping new GUI session..."
+            echo "Bootstrapping LaunchAgent..."
 
             sudo launchctl bootstrap \
               "gui/$TARGET_UID" \
@@ -791,7 +897,7 @@ jobs:
               || true
 
             echo
-            echo "Kickstarting service..."
+            echo "Starting service..."
 
             sudo launchctl kickstart \
               -k \
@@ -823,7 +929,7 @@ jobs:
               || true
 
             echo
-            echo "===== MACRDP LOGS ====="
+            echo "===== USER LOGS ====="
 
             find \
               "$TARGET_HOME/Library/Logs/macrdp" \
@@ -849,13 +955,13 @@ jobs:
 
             LAST_USER="$CURRENT_USER"
 
-            start_macrdp "$CURRENT_USER"
+            start_macrdp_for_user "$CURRENT_USER"
 
           fi
 
 
           # =====================================================
-          # Monitor Loop
+          # Main Monitor
           # =====================================================
 
           while true; do
@@ -903,13 +1009,13 @@ jobs:
 
               LAST_USER="$CURRENT_USER"
 
-              start_macrdp "$CURRENT_USER"
+              start_macrdp_for_user "$CURRENT_USER"
 
             fi
 
 
             # ---------------------------------------------------
-            # Restart if macrdp died
+            # Detect macrdp crash
             # ---------------------------------------------------
 
             if ! pgrep \
@@ -922,7 +1028,7 @@ jobs:
               echo "Restarting..."
               echo "=================================================="
 
-              start_macrdp "$CURRENT_USER"
+              start_macrdp_for_user "$CURRENT_USER"
 
             fi
 
@@ -932,7 +1038,7 @@ jobs:
 
 
       # =========================================================
-      # 16. Connection Information
+      # 17. Connection Information
       # =========================================================
 
       - name: Connection Information
@@ -969,27 +1075,22 @@ jobs:
 
           echo
           echo "Password:"
-          echo "Use the value stored in MACOS_PASSWORD secret"
+          echo "Use MACOS_PASSWORD GitHub Secret"
 
           echo
           echo "======================================================"
-          echo "Microsoft Remote Desktop"
-          echo "======================================================"
 
           echo
-          echo "PC:"
+          echo "Microsoft Remote Desktop PC:"
+
           echo "$TAILSCALE_IP:3390"
-
-          echo
-          echo "User:"
-          echo "$MACOS_USERNAME"
 
           echo
           echo "======================================================"
 
 
       # =========================================================
-      # 17. Final Diagnostic
+      # 18. Final Diagnostic
       # =========================================================
 
       - name: Final Diagnostic
@@ -1001,7 +1102,7 @@ jobs:
           echo "===== FINAL DIAGNOSTIC ====="
 
           echo
-          echo "Current console user:"
+          echo "Console user:"
 
           stat -f "%Su" /dev/console
 
@@ -1026,21 +1127,25 @@ jobs:
             || true
 
           echo
-          echo "Tailscale:"
+          echo "Tailscale status:"
 
-          tailscale status 2>/dev/null || true
+          tailscale status \
+            2>/dev/null \
+            || true
 
           echo
           echo "Tailscale IP:"
 
-          tailscale ip -4 2>/dev/null || true
+          tailscale ip -4 \
+            2>/dev/null \
+            || true
 
           echo
           echo "===== DIAGNOSTIC COMPLETE ====="
 
 
       # =========================================================
-      # 18. Keep Runner Alive
+      # 19. Keep Runner Alive
       # =========================================================
 
       - name: Keep Runner Alive
@@ -1052,19 +1157,19 @@ jobs:
           echo "======================================================"
 
           echo
-          echo "Tailscale is active."
+          echo "Tailscale: ACTIVE"
 
           echo
-          echo "macrdp is active."
+          echo "macrdp: ACTIVE"
 
           echo
-          echo "GUI user monitor is active."
+          echo "GUI user monitor: ACTIVE"
 
           echo
-          echo "Switch User detection is active."
+          echo "Switch User detection: ACTIVE"
 
           echo
-          echo "Runner will stay alive for approximately 5h 40m."
+          echo "Runner will stay alive."
 
           echo
 
@@ -1072,7 +1177,7 @@ jobs:
 
 
       # =========================================================
-      # 19. Cleanup
+      # 20. Cleanup
       # =========================================================
 
       - name: Cleanup
@@ -1111,14 +1216,15 @@ jobs:
           echo
           echo "Stopping Tailscale..."
 
-          sudo tailscale down || true
+          sudo tailscale down \
+            || true
 
           echo
           echo "Cleanup complete."
 
 
       # =========================================================
-      # 20. Final
+      # 21. Final
       # =========================================================
 
       - name: Final
