@@ -23,23 +23,17 @@ jobs:
           echo "=========================================="
 
           cat /etc/os-release
-
           echo ""
-          echo "Kernel:"
           uname -a
-
           echo ""
           echo "Architecture:"
           uname -m
-
           echo ""
           echo "CPU:"
           nproc
-
           echo ""
           echo "Memory:"
           free -h
-
           echo ""
           echo "Disk:"
           df -h
@@ -48,7 +42,7 @@ jobs:
       # ============================================================
       # 2. CREATE USER
       # ============================================================
-      - name: Create Abdulrahman User
+      - name: Create User
         shell: bash
         env:
           UBUNTU_USERNAME: ${{ secrets.UBUNTU_USERNAME }}
@@ -70,13 +64,15 @@ jobs:
 
           sudo usermod -aG sudo "$UBUNTU_USERNAME"
 
-          echo "$UBUNTU_USERNAME ALL=(ALL) NOPASSWD:ALL" |
+          echo "$UBUNTU_USERNAME ALL=(ALL) NOPASSWD:ALL" | \
             sudo tee "/etc/sudoers.d/$UBUNTU_USERNAME" >/dev/null
 
           sudo chmod 440 "/etc/sudoers.d/$UBUNTU_USERNAME"
 
           sudo chown -R "$UBUNTU_USERNAME:$UBUNTU_USERNAME" \
             "/home/$UBUNTU_USERNAME"
+
+          echo "User ready."
 
 
       # ============================================================
@@ -96,9 +92,11 @@ jobs:
           id "$UBUNTU_USERNAME"
 
           echo ""
+          echo "Groups:"
           groups "$UBUNTU_USERNAME"
 
           echo ""
+          echo "Sudo test:"
           sudo -u "$UBUNTU_USERNAME" sudo -n whoami
 
 
@@ -133,11 +131,13 @@ jobs:
             iproute2 \
             procps
 
+          echo "XFCE installed."
+
 
       # ============================================================
       # 5. START X11
       # ============================================================
-      - name: Start X11 Desktop
+      - name: Start X11
         shell: bash
         run: |
           set -e
@@ -162,7 +162,7 @@ jobs:
             echo "Xvfb is running."
           else
             echo "ERROR: Xvfb failed."
-            cat /tmp/xvfb.log
+            cat /tmp/xvfb.log || true
             exit 1
           fi
 
@@ -170,7 +170,7 @@ jobs:
       # ============================================================
       # 6. START XFCE
       # ============================================================
-      - name: Start XFCE Session
+      - name: Start XFCE
         shell: bash
         env:
           UBUNTU_USERNAME: ${{ secrets.UBUNTU_USERNAME }}
@@ -200,8 +200,8 @@ jobs:
 
           echo ""
           echo "Display:"
-          DISPLAY=:99 xdpyinfo 2>/dev/null |
-            grep -E "dimensions|depth" |
+          DISPLAY=:99 xdpyinfo 2>/dev/null | \
+            grep -E "dimensions|depth" | \
             head -10 || true
 
 
@@ -219,37 +219,32 @@ jobs:
 
           cd /tmp
 
-          RELEASE_JSON="$(
-            curl -fsSL \
-              https://api.github.com/repos/rustdesk/rustdesk/releases/latest
-          )"
+          RELEASE_JSON="$(curl -fsSL \
+            https://api.github.com/repos/rustdesk/rustdesk/releases/latest)"
 
           echo "Latest version:"
-          echo "$RELEASE_JSON" |
-            jq -r '.tag_name'
+          echo "$RELEASE_JSON" | jq -r '.tag_name'
 
           DOWNLOAD_URL="$(
             echo "$RELEASE_JSON" |
-              jq -r '
-                .assets[]
-                | select(
-                    (.name | test("x86_64|amd64"; "i"))
-                    and
-                    (.name | endswith(".deb"))
-                  )
-                | .browser_download_url
-              ' |
-              head -n 1
+            jq -r '
+              .assets[]
+              | select(
+                  (.name | test("x86_64|amd64"; "i"))
+                  and
+                  (.name | endswith(".deb"))
+                )
+              | .browser_download_url
+            ' |
+            head -n 1
           )"
 
-          if [ -z "$DOWNLOAD_URL" ] ||
-             [ "$DOWNLOAD_URL" = "null" ]; then
+          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
             echo "ERROR: RustDesk .deb not found."
             exit 1
           fi
 
-          echo "Downloading:"
-          echo "$DOWNLOAD_URL"
+          echo "Downloading RustDesk..."
 
           curl -fL "$DOWNLOAD_URL" \
             -o /tmp/rustdesk.deb
@@ -258,14 +253,14 @@ jobs:
             apt-get install -y /tmp/rustdesk.deb
 
           echo ""
-          echo "Installed RustDesk:"
+          echo "RustDesk version:"
           rustdesk --version
 
 
       # ============================================================
-      # 8. STOP RUSTDESK BEFORE CONFIGURATION
+      # 8. STOP RUSTDESK
       # ============================================================
-      - name: Stop RustDesk Before Configuration
+      - name: Stop RustDesk
         shell: bash
         run: |
           set +e
@@ -275,22 +270,15 @@ jobs:
           echo "=========================================="
 
           sudo systemctl stop rustdesk || true
-
           sleep 3
 
-          sudo pkill -f "rustdesk --service" || true
-
-          sleep 2
-
-          echo ""
-          echo "RustDesk processes:"
           pgrep -af rustdesk || true
 
 
       # ============================================================
-      # 9. CONFIGURE RUSTDESK SERVER
+      # 9. CONFIGURE RUSTDESK
       # ============================================================
-      - name: Configure RustDesk Server
+      - name: Configure RustDesk
         shell: bash
         env:
           RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
@@ -298,7 +286,7 @@ jobs:
           set -e
 
           echo "=========================================="
-          echo " CONFIGURING RUSTDESK NETWORK"
+          echo " CONFIGURING RUSTDESK"
           echo "=========================================="
 
           if [ -z "$RUSTDESK_PASSWORD" ]; then
@@ -308,83 +296,49 @@ jobs:
 
           sudo mkdir -p /root/.config/rustdesk
 
-          # --------------------------------------------------------
-          # IMPORTANT:
-          # RustDesk service runs as ROOT.
-          # Therefore configure ROOT RustDesk2.toml.
-          #
-          # rs-ny.rustdesk.com is a public RustDesk rendezvous
-          # endpoint currently used by RustDesk clients.
-          # --------------------------------------------------------
+          sudo rustdesk --password "$RUSTDESK_PASSWORD"
 
-          sudo tee /root/.config/rustdesk/RustDesk2.toml >/dev/null <<'EOF'
-rendezvous_server = 'rs-ny.rustdesk.com:21116'
-nat_type = 1
-serial = 0
+          sudo rustdesk \
+            --option verification-method \
+            use-permanent-password
 
-[options]
-allow-linux-headless = 'Y'
-custom-rendezvous-server = 'rs-ny.rustdesk.com'
-direct-server = 'Y'
-verification-method = 'use-permanent-password'
-approve-mode = 'password'
-EOF
+          sudo rustdesk \
+            --option approve-mode \
+            password
 
-          sudo chmod 600 \
-            /root/.config/rustdesk/RustDesk2.toml
+          sudo rustdesk \
+            --option allow-linux-headless \
+            Y
 
-          echo ""
-          echo "RustDesk2.toml created."
+          echo "RustDesk options configured."
 
-          echo ""
-          echo "Configuration:"
-          sudo cat /root/.config/rustdesk/RustDesk2.toml
 
-          echo ""
-          echo "Starting RustDesk service..."
+      # ============================================================
+      # 10. START RUSTDESK SERVICE
+      # ============================================================
+      - name: Start RustDesk Service
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " STARTING RUSTDESK SERVICE"
+          echo "=========================================="
 
           sudo systemctl daemon-reload
           sudo systemctl enable rustdesk
-          sudo systemctl start rustdesk
+          sudo systemctl restart rustdesk
 
-          sleep 8
+          sleep 10
 
           echo ""
-          echo "RustDesk service:"
           sudo systemctl status rustdesk \
             --no-pager \
             -l || true
 
 
       # ============================================================
-      # 10. SET PERMANENT PASSWORD
-      # ============================================================
-      - name: Set RustDesk Password
-        shell: bash
-        env:
-          RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
-        run: |
-          set +e
-
-          echo "=========================================="
-          echo " SETTING RUSTDESK PASSWORD"
-          echo "=========================================="
-
-          sudo rustdesk --password "$RUSTDESK_PASSWORD" || true
-
-          echo ""
-          echo "Password configuration command completed."
-
-          echo ""
-          echo "Restarting RustDesk..."
-
-          sudo systemctl restart rustdesk
-
-          sleep 8
-
-
-      # ============================================================
-      # 11. GET RUSTDESK ID
+      # 11. RUSTDESK ID
       # ============================================================
       - name: Get RustDesk ID
         shell: bash
@@ -412,98 +366,72 @@ EOF
 
 
       # ============================================================
-      # 12. VERIFY ACTUAL RUSTDESK CONFIG
+      # 12. INSPECT CONFIGURATION
       # ============================================================
-      - name: Verify RustDesk Configuration
+      - name: Inspect RustDesk Configuration
         shell: bash
         run: |
           set +e
 
           echo "=========================================="
-          echo " VERIFYING RUSTDESK CONFIGURATION"
+          echo " RUSTDESK CONFIGURATION"
           echo "=========================================="
 
           echo ""
-          echo "Root config files:"
-          sudo ls -la /root/.config/rustdesk/ || true
+          echo "RustDesk version:"
+          rustdesk --version
+
+          echo ""
+          echo "RustDesk ID:"
+          sudo rustdesk --get-id || true
+
+          echo ""
+          echo "=========================================="
+          echo " SYSTEMD"
+          echo "=========================================="
+
+          sudo systemctl cat rustdesk || true
+
+          echo ""
+          echo "Service properties:"
+
+          sudo systemctl show rustdesk \
+            -p User \
+            -p Group \
+            -p ExecStart \
+            -p Environment \
+            -p WorkingDirectory \
+            --no-pager || true
+
+          echo ""
+          echo "=========================================="
+          echo " ROOT CONFIG FILES"
+          echo "=========================================="
+
+          sudo find /root/.config/rustdesk \
+            -maxdepth 2 \
+            -type f \
+            -print 2>/dev/null || true
 
           echo ""
           echo "RustDesk2.toml:"
-          sudo cat /root/.config/rustdesk/RustDesk2.toml || true
+
+          if [ -f /root/.config/rustdesk/RustDesk2.toml ]; then
+            sudo cat /root/.config/rustdesk/RustDesk2.toml
+          else
+            echo "RustDesk2.toml not found."
+          fi
 
           echo ""
           echo "RustDesk.toml:"
-          sudo cat /root/.config/rustdesk/RustDesk.toml || true
 
-          echo ""
-          echo "RustDesk service:"
-          sudo systemctl status rustdesk \
-            --no-pager \
-            -l || true
-
-          echo ""
-          echo "RustDesk processes:"
-          pgrep -af rustdesk || true
-
-
-      # ============================================================
-      # 13. TEST RUSTDESK RENDEZVOUS SERVER
-      # ============================================================
-      - name: Test RustDesk Rendezvous Network
-        shell: bash
-        run: |
-          set +e
-
-          echo "=========================================="
-          echo " TESTING RUSTDESK RENDEZVOUS"
-          echo "=========================================="
-
-          SERVER="rs-ny.rustdesk.com"
-
-          echo ""
-          echo "DNS:"
-          getent ahosts "$SERVER" || true
-
-          echo ""
-          echo "TCP 21116:"
-          timeout 10 bash -c \
-            "</dev/tcp/$SERVER/21116" \
-            2>/dev/null
-
-          if [ $? -eq 0 ]; then
-            echo "TCP 21116: OPEN"
+          if [ -f /root/.config/rustdesk/RustDesk.toml ]; then
+            sudo cat /root/.config/rustdesk/RustDesk.toml
           else
-            echo "TCP 21116: NOT OPEN / NOT TESTABLE"
+            echo "RustDesk.toml not found."
           fi
 
           echo ""
-          echo "TCP 21117:"
-          timeout 10 bash -c \
-            "</dev/tcp/$SERVER/21117" \
-            2>/dev/null
-
-          if [ $? -eq 0 ]; then
-            echo "TCP 21117: OPEN"
-          else
-            echo "TCP 21117: NOT OPEN / NOT TESTABLE"
-          fi
-
-          echo ""
-          echo "Current network connections:"
-          sudo ss -tunap |
-            grep -Ei \
-              "rustdesk|21116|21117" ||
-            true
-
-
-      # ============================================================
-      # 14. CHECK RUSTDESK LOGS
-      # ============================================================
-      - name: Check RustDesk Logs
-        shell: bash
-        run: |
-          set +e
-
           echo "=========================================="
           echo " RUSTDESK LOGS"
           echo "=========================================="
@@ -513,23 +441,55 @@ EOF
             -type f \
             -print \
             2>/dev/null |
-            sort
+            sort || true
 
           echo ""
-          echo "Recent service log:"
-          sudo tail -200 \
-            /root/.local/share/logs/RustDesk/service/rustdesk_rCURRENT.log \
+          echo "Recent RustDesk logs:"
+
+          sudo find \
+            /root/.local/share/logs/RustDesk \
+            -type f \
+            -print \
+            -exec tail -80 {} \; \
             2>/dev/null || true
 
           echo ""
-          echo "Recent get-id log:"
-          sudo tail -100 \
-            /root/.local/share/logs/RustDesk/get-id/rustdesk_rCURRENT.log \
+          echo "=========================================="
+          echo " PROCESSES"
+          echo "=========================================="
+
+          pgrep -af rustdesk || true
+
+          echo ""
+          echo "=========================================="
+          echo " NETWORK"
+          echo "=========================================="
+
+          sudo ss -tunap 2>/dev/null |
+            grep -Ei "rustdesk|21116|21117" ||
+            true
+
+          echo ""
+          echo "All established connections:"
+
+          sudo ss -tunap 2>/dev/null |
+            grep ESTAB ||
+            true
+
+          echo ""
+          echo "=========================================="
+          echo " JOURNAL"
+          echo "=========================================="
+
+          sudo journalctl \
+            -u rustdesk \
+            --no-pager \
+            -n 150 \
             2>/dev/null || true
 
 
       # ============================================================
-      # 15. OPEN XFCE TERMINAL
+      # 13. OPEN XFCE TERMINAL
       # ============================================================
       - name: Open XFCE Terminal
         shell: bash
@@ -553,7 +513,7 @@ EOF
 
 
       # ============================================================
-      # 16. FINAL CHECK
+      # 14. FINAL CHECK
       # ============================================================
       - name: Final Check
         shell: bash
@@ -570,15 +530,17 @@ EOF
 
           echo ""
           echo "RustDesk service:"
-          sudo systemctl is-active rustdesk || true
+          sudo systemctl status rustdesk \
+            --no-pager \
+            -l || true
 
           echo ""
           echo "RustDesk process:"
           pgrep -af rustdesk || true
 
           echo ""
-          echo "RustDesk connections:"
-          sudo ss -tunap |
+          echo "RustDesk network:"
+          sudo ss -tunap 2>/dev/null |
             grep -Ei "rustdesk|21116|21117" ||
             true
 
@@ -596,16 +558,9 @@ EOF
             grep "dimensions" ||
             true
 
-          echo ""
-          echo "=========================================="
-          echo " FINAL RUSTDESK ID"
-          echo "=========================================="
-
-          sudo rustdesk --get-id || true
-
 
       # ============================================================
-      # 17. KEEP RUNNER ALIVE
+      # 15. KEEP RUNNER ALIVE
       # ============================================================
       - name: Keep Runner Alive
         shell: bash
@@ -620,7 +575,6 @@ EOF
 
           echo ""
           echo "Runner will remain active."
-          echo "=========================================="
 
           while true; do
             sleep 60
