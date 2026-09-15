@@ -479,31 +479,131 @@ jobs:
               <key>StandardOutPath</key>
               <string>$LOG_DIR/stdout.log</string>
 
-              <key>StandardErrorPath</key>
-              <string>$LOG_DIR/stderr.log</string>
+- name: Create macrdp LaunchAgent
+  shell: bash
+  env:
+    MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+    MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+  run: |
+    set -e
 
-          </dict>
-          </plist>
-          EOF
+    USER_HOME=$(dscl . -read \
+      /Users/"$MACOS_USERNAME" NFSHomeDirectory \
+      | awk '{print $2}')
 
-          #
-          # Move plist into user's LaunchAgents
-          #
+    USER_UID=$(id -u "$MACOS_USERNAME")
 
-          sudo mv \
-            /tmp/com.macrdp.server.plist \
-            "$AGENT"
+    AGENT_DIR="$USER_HOME/Library/LaunchAgents"
+    AGENT="$AGENT_DIR/com.macrdp.server.plist"
+    LOG_DIR="$USER_HOME/Library/Logs/macrdp"
 
-          sudo chown \
-            "$MACOS_USERNAME":staff \
-            "$AGENT"
+    sudo mkdir -p "$AGENT_DIR"
+    sudo mkdir -p "$LOG_DIR"
 
-          chmod 644 "$AGENT"
+    sudo chown -R "$MACOS_USERNAME":staff \
+      "$USER_HOME/Library"
 
-          echo
-          echo "===== LAUNCHAGENT ====="
+    echo "User home:"
+    echo "$USER_HOME"
 
-          cat "$AGENT"
+    echo "User UID:"
+    echo "$USER_UID"
+
+    echo "Creating LaunchAgent..."
+
+    cat > /tmp/com.macrdp.server.plist <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+"http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+
+<plist version="1.0">
+<dict>
+
+    <key>Label</key>
+    <string>com.macrdp.server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+
+        <string>/usr/local/bin/macrdp</string>
+
+        <string>--bind</string>
+        <string>0.0.0.0:3390</string>
+
+        <string>--username</string>
+        <string>$MACOS_USERNAME</string>
+
+        <string>--password</string>
+        <string>$MACOS_PASSWORD</string>
+
+        <string>--enable-h264</string>
+
+        <string>--fps</string>
+        <string>60</string>
+
+        <string>--bitrate</string>
+        <string>8</string>
+
+        <string>--keyframe-interval</string>
+        <string>2</string>
+
+        <string>--flush-frames</string>
+        <string>4</string>
+
+        <string>--log-dir</string>
+        <string>$LOG_DIR</string>
+
+        <string>--verbose</string>
+
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>$USER_HOME</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>LimitLoadToSessionType</key>
+    <array>
+        <string>Aqua</string>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/stderr.log</string>
+
+</dict>
+</plist>
+EOF
+
+    sudo mv \
+      /tmp/com.macrdp.server.plist \
+      "$AGENT"
+
+    sudo chown \
+      "$MACOS_USERNAME":staff \
+      "$AGENT"
+
+    sudo chmod 644 "$AGENT"
+
+    echo
+    echo "===== LAUNCHAGENT CREATED ====="
+
+    sudo cat "$AGENT"
+
+    echo
+    echo "LaunchAgent ready."
 
       # =========================================================
       # 14. Stop Any Old macrdp
