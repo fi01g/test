@@ -1,4 +1,4 @@
-name: macOS RustDesk - Abdulrahman
+name: macOS RDP - Tailscale
 
 on:
   workflow_dispatch:
@@ -78,15 +78,9 @@ jobs:
             exit 1
           fi
 
-          echo ""
-          echo "Username:"
-          echo "$MACOS_USERNAME"
-
           if id "$MACOS_USERNAME" >/dev/null 2>&1; then
-            echo ""
             echo "User already exists."
           else
-            echo ""
             echo "Creating user..."
 
             sudo sysadminctl \
@@ -107,7 +101,7 @@ jobs:
             admin
 
           echo ""
-          echo "User ID:"
+          echo "User:"
           id "$MACOS_USERNAME"
 
           echo ""
@@ -116,7 +110,7 @@ jobs:
 
 
       # =========================================================
-      # 3. VERIFY PASSWORD + ADMIN
+      # 3. VERIFY USER
       # =========================================================
       - name: Verify Abdulrahman
         shell: bash
@@ -149,7 +143,7 @@ jobs:
             NFSHomeDirectory
 
           echo ""
-          echo "Checking Administrator membership..."
+          echo "Checking Administrator..."
 
           ADMIN_CHECK=$(
             dseditgroup \
@@ -161,17 +155,15 @@ jobs:
           echo "$ADMIN_CHECK"
 
           if echo "$ADMIN_CHECK" | grep -qi "yes"; then
-            echo ""
-            echo "SUCCESS: Abdulrahman is an Administrator."
+            echo "SUCCESS: Administrator."
           else
-            echo ""
-            echo "ERROR: Abdulrahman is NOT an Administrator."
+            echo "ERROR: Not Administrator."
             exit 1
           fi
 
 
       # =========================================================
-      # 4. SET AUTO LOGIN
+      # 4. CONFIGURE AUTO LOGIN
       # =========================================================
       - name: Configure Abdulrahman Auto Login
         shell: bash
@@ -185,14 +177,6 @@ jobs:
           echo "=========================================="
           echo " CONFIGURING AUTO LOGIN"
           echo "=========================================="
-
-          echo ""
-          echo "Current console user:"
-          stat -f "%Su" /dev/console
-
-          echo ""
-          echo "Target:"
-          echo "$MACOS_USERNAME"
 
           sudo sysadminctl \
             -autologin set \
@@ -212,142 +196,179 @@ jobs:
           stat -f "%Su" /dev/console
 
           echo ""
-          echo "IMPORTANT:"
-          echo "Auto-login applies to a future login."
+          echo "NOTE:"
+          echo "Auto-login applies to a future GUI login."
           echo "It does not replace the current GUI session."
 
 
       # =========================================================
-      # 5. INSTALL RUSTDESK
+      # 5. INSTALL TAILSCALE CLI
       # =========================================================
-      - name: Install RustDesk
+      - name: Install Tailscale
         shell: bash
         run: |
           set -e
 
           echo "=========================================="
-          echo " INSTALLING RUSTDESK"
+          echo " INSTALLING TAILSCALE"
           echo "=========================================="
 
           brew update
 
-          brew install --cask rustdesk
-
-          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
-
-          if [ ! -f "$RUSTDESK" ]; then
-            echo "ERROR: RustDesk executable not found."
-            exit 1
-          fi
+          brew install tailscale
 
           echo ""
-          echo "RustDesk version:"
-          "$RUSTDESK" --version || true
+          echo "Tailscale version:"
+
+          tailscale version
+
+          echo ""
+          echo "tailscaled:"
+          which tailscaled || true
+
+          echo ""
+          echo "tailscale:"
+          which tailscale
 
 
       # =========================================================
-      # 6. CONFIGURE RUSTDESK
+      # 6. START TAILSCALE
       # =========================================================
-      - name: Configure RustDesk
+      - name: Start Tailscale
         shell: bash
         env:
-          RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
 
         run: |
           set -e
 
           echo "=========================================="
-          echo " CONFIGURING RUSTDESK"
+          echo " STARTING TAILSCALE"
           echo "=========================================="
 
-          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
-
-          if [ -z "$RUSTDESK_PASSWORD" ]; then
-            echo "ERROR: RUSTDESK_PASSWORD is empty."
+          if [ -z "$TAILSCALE_AUTH_KEY" ]; then
+            echo "ERROR: TAILSCALE_AUTH_KEY is empty."
             exit 1
           fi
 
           echo ""
-          echo "RustDesk ID:"
+          echo "Starting tailscaled..."
 
-          ID=$(
-            "$RUSTDESK" \
-              --get-id \
-              2>/dev/null || true
-          )
-
-          echo "$ID"
-
-          echo ""
-          echo "Starting RustDesk server..."
-
-          "$RUSTDESK" \
-            --server \
-            >/tmp/rustdesk-server.log 2>&1 &
+          sudo brew services start tailscale
 
           sleep 10
 
           echo ""
-          echo "Setting permanent password..."
-
-          PASSWORD_OUTPUT=$(
-            sudo "$RUSTDESK" \
-              --password "$RUSTDESK_PASSWORD" \
-              2>&1
-          )
-
-          echo "$PASSWORD_OUTPUT"
-
-          if echo "$PASSWORD_OUTPUT" | grep -qi "done"; then
-            echo ""
-            echo "SUCCESS: RustDesk password configured."
-          else
-            echo ""
-            echo "WARNING: RustDesk did not report Done."
-            cat /tmp/rustdesk-server.log || true
-          fi
+          echo "Tailscale daemon:"
+          pgrep -fl tailscaled || true
 
           echo ""
-          echo "Restarting RustDesk..."
+          echo "Authenticating Tailscale..."
 
-          pkill -f \
-            "/Applications/RustDesk.app/Contents/MacOS/RustDesk" \
-            || true
-
-          sleep 5
-
-          nohup "$RUSTDESK" \
-            >/tmp/rustdesk.log 2>&1 &
+          sudo tailscale up \
+            --auth-key="$TAILSCALE_AUTH_KEY" \
+            --hostname="github-macos-rdp" \
+            --accept-dns=true
 
           sleep 10
 
-          FINAL_ID=$(
-            "$RUSTDESK" \
-              --get-id \
-              2>/dev/null || true
+          echo ""
+          echo "=========================================="
+          echo " TAILSCALE STATUS"
+          echo "=========================================="
+
+          sudo tailscale status
+
+          echo ""
+          echo "Tailscale IP:"
+
+          TAILSCALE_IP=$(
+            sudo tailscale ip -4 | head -1
           )
 
-          echo ""
-          echo "=========================================="
-          echo " RUSTDESK READY"
-          echo "=========================================="
+          echo "$TAILSCALE_IP"
 
-          echo ""
-          echo "RustDesk ID:"
-          echo "$FINAL_ID"
-
-          if [ -z "$FINAL_ID" ]; then
-            echo "ERROR: Final RustDesk ID is empty."
+          if [ -z "$TAILSCALE_IP" ]; then
+            echo "ERROR: Tailscale IPv4 not found."
             exit 1
           fi
 
-          echo "FINAL_RUSTDESK_ID=$FINAL_ID" >> "$GITHUB_ENV"
+          echo "TAILSCALE_IP=$TAILSCALE_IP" >> "$GITHUB_ENV"
 
 
       # =========================================================
-      # 7. START RUSTDESK AS ABDULRAHMAN
+      # 7. INSTALL RDP SERVER
       # =========================================================
-      - name: Start RustDesk As Abdulrahman
+      - name: Install macOS RDP Server
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " INSTALLING macOS RDP SERVER"
+          echo "=========================================="
+
+          echo ""
+          echo "Installing Rust..."
+
+          brew install rust
+
+          echo ""
+          echo "Rust:"
+          rustc --version
+
+          echo ""
+          echo "Cargo:"
+          cargo --version
+
+          echo ""
+          echo "Cloning macrdp..."
+
+          cd "$RUNNER_TEMP"
+
+          git clone \
+            https://github.com/clintcan/macrdp.git \
+            macrdp
+
+          cd macrdp
+
+          echo ""
+          echo "Building macrdp..."
+
+          cargo build --release
+
+          echo ""
+          echo "Build completed."
+
+          echo ""
+          echo "Signing macrdp..."
+
+          codesign \
+            -s - \
+            --force \
+            target/release/macrdp
+
+          echo ""
+          echo "Installing binary..."
+
+          sudo mkdir -p /usr/local/bin
+
+          sudo cp \
+            target/release/macrdp \
+            /usr/local/bin/macrdp
+
+          sudo chmod 755 \
+            /usr/local/bin/macrdp
+
+          echo ""
+          echo "macrdp version/build:"
+          /usr/local/bin/macrdp --help | head -30 || true
+
+
+      # =========================================================
+      # 8. OPEN macOS PRIVACY SETTINGS
+      # =========================================================
+      - name: Open RDP Privacy Permissions
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
@@ -356,65 +377,15 @@ jobs:
           set -e
 
           echo "=========================================="
-          echo " STARTING RUSTDESK AS ABDULRAHMAN"
+          echo " OPENING RDP PRIVACY SETTINGS"
           echo "=========================================="
-
-          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
 
           echo ""
           echo "Console user:"
           stat -f "%Su" /dev/console
 
           echo ""
-          echo "Starting RustDesk using:"
-          echo "$MACOS_USERNAME"
-
-          sudo -u "$MACOS_USERNAME" -H \
-            env \
-            HOME="/Users/$MACOS_USERNAME" \
-            USER="$MACOS_USERNAME" \
-            LOGNAME="$MACOS_USERNAME" \
-            nohup "$RUSTDESK" \
-            >/tmp/rustdesk-abdulrahman.log 2>&1 &
-
-          sleep 10
-
-          echo ""
-          echo "RustDesk processes:"
-          pgrep -fl RustDesk || true
-
-          echo ""
-          echo "RustDesk owned by Abdulrahman:"
-          ps aux | grep "$MACOS_USERNAME" | grep RustDesk || true
-
-          echo ""
-          echo "RustDesk log:"
-          tail -50 \
-            /tmp/rustdesk-abdulrahman.log \
-            2>/dev/null || true
-
-
-      # =========================================================
-      # 7.5. REQUEST macOS PRIVACY PERMISSIONS
-      # =========================================================
-      - name: Request RustDesk Screen Permissions
-        shell: bash
-        env:
-          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo " REQUESTING RUSTDESK MACOS PERMISSIONS"
-          echo "=========================================="
-
-          echo ""
-          echo "Current Console User:"
-          stat -f "%Su" /dev/console
-
-          echo ""
-          echo "Opening Screen Recording settings..."
+          echo "Opening Screen Recording..."
 
           sudo -u "$MACOS_USERNAME" -H \
             env \
@@ -428,10 +399,7 @@ jobs:
           sleep 5
 
           echo ""
-          echo "Screen Recording settings opened."
-
-          echo ""
-          echo "Opening Accessibility settings..."
+          echo "Opening Accessibility..."
 
           sudo -u "$MACOS_USERNAME" -H \
             env \
@@ -445,26 +413,24 @@ jobs:
           sleep 5
 
           echo ""
-          echo "Accessibility settings opened."
-
-          echo ""
           echo "=========================================="
-          echo " USER ACTION REQUIRED"
+          echo " IMPORTANT"
           echo "=========================================="
 
           echo ""
-          echo "Please allow RustDesk in:"
+          echo "macrdp requires:"
           echo ""
           echo "1. Screen Recording"
           echo "2. Accessibility"
           echo ""
-          echo "Then restart RustDesk."
+          echo "macOS may require these permissions"
+          echo "to be approved manually."
 
 
       # =========================================================
-      # 8. OPEN SYSTEM SETTINGS AS ABDULRAHMAN
+      # 9. START macRDPP
       # =========================================================
-      - name: Open System Settings As Abdulrahman
+      - name: Start macOS RDP Server
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
@@ -473,179 +439,145 @@ jobs:
           set -e
 
           echo "=========================================="
-          echo " OPENING SYSTEM SETTINGS"
+          echo " STARTING macOS RDP SERVER"
           echo "=========================================="
 
-          sudo -u "$MACOS_USERNAME" -H \
-            env \
-            HOME="/Users/$MACOS_USERNAME" \
-            USER="$MACOS_USERNAME" \
-            LOGNAME="$MACOS_USERNAME" \
-            /usr/bin/open \
-            -a "System Settings" \
-            2>&1 || true
+          RDP="/usr/local/bin/macrdp"
 
-          sleep 5
+          if [ ! -x "$RDP" ]; then
+            echo "ERROR: macrdp not found."
+            exit 1
+          fi
 
           echo ""
           echo "Console user:"
           stat -f "%Su" /dev/console
 
           echo ""
-          echo "GUI sessions:"
-          who || true
+          echo "Starting macrdp..."
+
+          sudo -u "$MACOS_USERNAME" -H \
+            env \
+            HOME="/Users/$MACOS_USERNAME" \
+            USER="$MACOS_USERNAME" \
+            LOGNAME="$MACOS_USERNAME" \
+            nohup "$RDP" \
+              --bind 0.0.0.0:3390 \
+              --enable-h264 \
+              --adaptive-bitrate \
+              >/tmp/macrdp.log 2>&1 &
+
+          sleep 10
+
+          echo ""
+          echo "macrdp process:"
+
+          pgrep -fl macrdp || true
+
+          echo ""
+          echo "macrdp log:"
+
+          tail -100 \
+            /tmp/macrdp.log \
+            2>/dev/null || true
 
 
       # =========================================================
-      # 9. SEND RUSTDESK DATA TO TELEGRAM
+      # 10. VERIFY RDP PORT
       # =========================================================
-      - name: Send Telegram With Copy Buttons
+      - name: Verify RDP Server
         shell: bash
-        env:
-          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
-
         run: |
           set -e
 
           echo "=========================================="
-          echo " SENDING RUSTDESK DATA TO TELEGRAM"
+          echo " VERIFYING RDP SERVER"
           echo "=========================================="
 
-          ID="$FINAL_RUSTDESK_ID"
-          PASSWORD="$RUSTDESK_PASSWORD"
+          echo ""
+          echo "Listening ports:"
 
-          if [ -z "$ID" ]; then
-            echo "ERROR: RustDesk ID is empty."
-            exit 1
-          fi
+          lsof \
+            -nP \
+            -iTCP:3390 \
+            -sTCP:LISTEN \
+            || true
 
-          if [ -z "$PASSWORD" ]; then
-            echo "ERROR: RustDesk password is empty."
-            exit 1
-          fi
+          echo ""
+          echo "Testing local RDP port..."
 
-          if [ -z "$BOT_TOKEN" ]; then
-            echo "ERROR: TELEGRAM_BOT_TOKEN is empty."
-            exit 1
-          fi
+          nc \
+            -zv \
+            127.0.0.1 \
+            3390
 
-          if [ -z "$CHAT_ID" ]; then
-            echo "ERROR: TELEGRAM_CHAT_ID is empty."
-            exit 1
-          fi
-
-          export ID
-          export PASSWORD
-
-          python3 <<'PY'
-          import os
-          import json
-          import urllib.request
-
-          bot_token = os.environ["BOT_TOKEN"]
-          chat_id = os.environ["CHAT_ID"]
-          rustdesk_id = os.environ["ID"]
-          password = os.environ["PASSWORD"]
-
-          payload = {
-              "chat_id": chat_id,
-              "text": (
-                  "✅ macOS RustDesk جاهز\n\n"
-                  f"🆔 ID: {rustdesk_id}\n"
-                  f"🔐 Password: {password}\n\n"
-                  "اضغط على الزر لنسخ البيانات."
-              ),
-              "reply_markup": {
-                  "inline_keyboard": [
-                      [
-                          {
-                              "text": "📋 نسخ ID",
-                              "copy_text": {
-                                  "text": rustdesk_id
-                              }
-                          }
-                      ],
-                      [
-                          {
-                              "text": "🔑 نسخ الباسورد",
-                              "copy_text": {
-                                  "text": password
-                              }
-                          }
-                      ]
-                  ]
-              }
-          }
-
-          data = json.dumps(
-              payload,
-              ensure_ascii=False
-          ).encode("utf-8")
-
-          url = (
-              "https://api.telegram.org/bot"
-              + bot_token
-              + "/sendMessage"
-          )
-
-          request = urllib.request.Request(
-              url,
-              data=data,
-              headers={
-                  "Content-Type": "application/json"
-              },
-              method="POST"
-          )
-
-          with urllib.request.urlopen(request) as response:
-              result = json.loads(
-                  response.read().decode("utf-8")
-              )
-
-          if not result.get("ok"):
-              raise RuntimeError(result)
-
-          message_id = result["result"]["message_id"]
-
-          print(
-              "Telegram message sent successfully."
-          )
-
-          print(
-              "Telegram message ID:",
-              message_id
-          )
-
-          with open(
-              "/tmp/telegram_message_id.txt",
-              "w"
-          ) as f:
-              f.write(str(message_id))
-
-          with open(
-              os.environ["GITHUB_ENV"],
-              "a"
-          ) as f:
-              f.write(
-                  f"TELEGRAM_MESSAGE_ID={message_id}\n"
-              )
-          PY
+          echo ""
+          echo "RDP port 3390 is OPEN."
 
 
       # =========================================================
-      # 10. FINAL CHECK
+      # 11. PRINT CONNECTION INFORMATION
       # =========================================================
-      - name: Final Check
+      - name: RDP Connection Information
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
 
         run: |
+          echo ""
+          echo "=========================================="
+          echo "       MACOS RDP IS READY"
+          echo "=========================================="
+
+          echo ""
+          echo "Tailscale IP:"
+          echo "$TAILSCALE_IP"
+
+          echo ""
+          echo "RDP Address:"
+          echo "$TAILSCALE_IP:3390"
+
+          echo ""
+          echo "Username:"
+          echo "$MACOS_USERNAME"
+
+          echo ""
+          echo "Password:"
+          echo "Use MACOS_PASSWORD secret"
+
+          echo ""
+          echo "=========================================="
+          echo " MICROSOFT REMOTE DESKTOP"
+          echo "=========================================="
+
+          echo ""
+          echo "PC:"
+          echo "$TAILSCALE_IP:3390"
+
+          echo ""
+          echo "User:"
+          echo "$MACOS_USERNAME"
+
+          echo ""
+          echo "=========================================="
+
+          echo ""
+          echo "TAILSCALE_IP=$TAILSCALE_IP" >> "$GITHUB_ENV"
+
+
+      # =========================================================
+      # 12. FINAL CHECK
+      # =========================================================
+      - name: Final Check
+        shell: bash
+        run: |
           echo "=========================================="
           echo " FINAL CHECK"
           echo "=========================================="
+
+          echo ""
+          echo "macOS:"
+          sw_vers
 
           echo ""
           echo "Console user:"
@@ -656,58 +588,74 @@ jobs:
           who || true
 
           echo ""
-          echo "Current Actions user:"
-          whoami
+          echo "Tailscale:"
+          sudo tailscale status || true
 
           echo ""
-          echo "Abdulrahman:"
-          id "$MACOS_USERNAME"
+          echo "Tailscale IP:"
+          sudo tailscale ip -4 || true
 
           echo ""
-          echo "Abdulrahman groups:"
-          id -Gn "$MACOS_USERNAME"
+          echo "macrdp:"
+          pgrep -fl macrdp || true
 
           echo ""
-          echo "RustDesk:"
-          pgrep -fl RustDesk || true
-
-          echo ""
-          echo "Final RustDesk ID:"
-          echo "$FINAL_RUSTDESK_ID"
+          echo "RDP:"
+          lsof \
+            -nP \
+            -iTCP:3390 \
+            -sTCP:LISTEN \
+            || true
 
 
       # =========================================================
-      # 11. KEEP RUNNER ALIVE
+      # 13. KEEP RUNNER ALIVE
       # =========================================================
       - name: Keep Runner Alive
         shell: bash
         run: |
           echo "=========================================="
-          echo " RUNNER IS ONLINE"
+          echo " RDP SERVER IS ONLINE"
           echo "=========================================="
-
-          # 20400 seconds = 5 hours 40 minutes
-          # Leave enough time for the final Telegram
-          # and restart steps before the 350-minute limit.
 
           END_TIME=$(( $(date +%s) + 20400 ))
 
           while [ "$(date +%s)" -lt "$END_TIME" ]
           do
-            echo ""
-            echo "[$(date)] Runner alive"
 
+            echo ""
+            echo "[$(date)] Server alive"
+
+            echo ""
             echo "Console user:"
             stat -f "%Su" /dev/console \
               2>/dev/null || echo "unknown"
 
-            echo "Logged users:"
-            who || true
+            echo ""
+            echo "Tailscale:"
+            sudo tailscale status \
+              2>/dev/null || true
 
-            echo "RustDesk:"
-            pgrep -fl RustDesk || true
+            echo ""
+            echo "Tailscale IP:"
+            sudo tailscale ip -4 \
+              2>/dev/null || true
+
+            echo ""
+            echo "RDP:"
+            lsof \
+              -nP \
+              -iTCP:3390 \
+              -sTCP:LISTEN \
+              2>/dev/null || true
+
+            echo ""
+            echo "macrdp:"
+            pgrep -fl macrdp \
+              2>/dev/null || true
 
             sleep 300
+
           done
 
           echo ""
@@ -715,117 +663,46 @@ jobs:
 
 
       # =========================================================
-      # 12. EDIT TELEGRAM MESSAGE TO EXPIRED
+      # 14. CLEANUP
       # =========================================================
-      - name: Edit Telegram Expired
-        if: always()
-        shell: bash
-        env:
-          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          MSG_ID: ${{ env.TELEGRAM_MESSAGE_ID }}
-
-        run: |
-          echo "=========================================="
-          echo " MARKING TELEGRAM MESSAGE AS EXPIRED"
-          echo "=========================================="
-
-          if [ -z "$MSG_ID" ] && [ -f /tmp/telegram_message_id.txt ]; then
-            MSG_ID=$(cat /tmp/telegram_message_id.txt)
-          fi
-
-          if [ -z "$MSG_ID" ]; then
-            echo "No Telegram message ID found."
-            exit 0
-          fi
-
-          export MSG_ID
-
-          python3 <<'PY'
-          import os
-          import json
-          import urllib.request
-
-          payload = {
-              "chat_id": os.environ["CHAT_ID"],
-              "message_id": int(os.environ["MSG_ID"]),
-              "text": (
-                  "❌ macOS RustDesk انتهى\n\n"
-                  "🆔 الـID السابق لم يعد متاحًا.\n"
-                  "🔄 سيتم تشغيل سيرفر macOS جديد تلقائيًا.\n\n"
-                  "انتظر الرسالة الجديدة."
-              )
-          }
-
-          data = json.dumps(
-              payload,
-              ensure_ascii=False
-          ).encode("utf-8")
-
-          url = (
-              "https://api.telegram.org/bot"
-              + os.environ["BOT_TOKEN"]
-              + "/editMessageText"
-          )
-
-          request = urllib.request.Request(
-              url,
-              data=data,
-              headers={
-                  "Content-Type": "application/json"
-              },
-              method="POST"
-          )
-
-          with urllib.request.urlopen(request) as response:
-              print(
-                  response.read().decode("utf-8")
-              )
-          PY
-
-          echo "Telegram message marked as expired."
-
-
-      # =========================================================
-      # 13. TRIGGER NEXT RUN
-      # =========================================================
-      - name: Trigger Next Run
-        if: always()
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-        run: |
-          echo "=========================================="
-          echo " STARTING NEXT MACOS RUN"
-          echo "=========================================="
-
-          gh workflow run rustdesk-macos.yml
-
-          echo ""
-          echo "SUCCESS: Next macOS workflow triggered."
-
-
-      # =========================================================
-      # 14. FINAL
-      # =========================================================
-      - name: Restart Information
+      - name: Cleanup
         if: always()
         shell: bash
         run: |
           echo "=========================================="
-          echo " MACOS CYCLE FINISHED"
+          echo " CLEANUP"
           echo "=========================================="
 
           echo ""
-          echo "The current macOS runner is ending."
+          echo "Stopping macrdp..."
+
+          sudo pkill -f \
+            "/usr/local/bin/macrdp" \
+            || true
 
           echo ""
-          echo "A new run of:"
-          echo "rustdesk-macos.yml"
+          echo "Stopping Tailscale..."
 
-          echo "has been requested."
+          sudo tailscale down \
+            || true
 
           echo ""
-          echo "The new run will create a new RustDesk ID"
-          echo "and send a new Telegram message."
+          echo "Stopping Tailscale service..."
+
+          sudo brew services stop tailscale \
+            || true
+
+          echo ""
+          echo "Cleanup finished."
+
+
+      # =========================================================
+      # 15. FINAL
+      # =========================================================
+      - name: Final
+        if: always()
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo " MACOS RDP CYCLE FINISHED"
+          echo "=========================================="
