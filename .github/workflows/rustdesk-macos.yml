@@ -395,6 +395,73 @@ jobs:
 
 
       # =========================================================
+      # 7.5. REQUEST macOS PRIVACY PERMISSIONS
+      # =========================================================
+      - name: Request RustDesk Screen Permissions
+        shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " REQUESTING RUSTDESK MACOS PERMISSIONS"
+          echo "=========================================="
+
+          echo ""
+          echo "Current Console User:"
+          stat -f "%Su" /dev/console
+
+          echo ""
+          echo "Opening Screen Recording settings..."
+
+          sudo -u "$MACOS_USERNAME" -H \
+            env \
+            HOME="/Users/$MACOS_USERNAME" \
+            USER="$MACOS_USERNAME" \
+            LOGNAME="$MACOS_USERNAME" \
+            open \
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture" \
+            2>&1 || true
+
+          sleep 5
+
+          echo ""
+          echo "Screen Recording settings opened."
+
+          echo ""
+          echo "Opening Accessibility settings..."
+
+          sudo -u "$MACOS_USERNAME" -H \
+            env \
+            HOME="/Users/$MACOS_USERNAME" \
+            USER="$MACOS_USERNAME" \
+            LOGNAME="$MACOS_USERNAME" \
+            open \
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility" \
+            2>&1 || true
+
+          sleep 5
+
+          echo ""
+          echo "Accessibility settings opened."
+
+          echo ""
+          echo "=========================================="
+          echo " USER ACTION REQUIRED"
+          echo "=========================================="
+
+          echo ""
+          echo "Please allow RustDesk in:"
+          echo ""
+          echo "1. Screen Recording"
+          echo "2. Accessibility"
+          echo ""
+          echo "Then restart RustDesk."
+
+
+      # =========================================================
       # 8. OPEN SYSTEM SETTINGS AS ABDULRAHMAN
       # =========================================================
       - name: Open System Settings As Abdulrahman
