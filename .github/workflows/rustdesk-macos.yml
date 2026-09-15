@@ -15,36 +15,38 @@ jobs:
     steps:
 
       # =========================================================
-      # 1. System Information
+      # 1. SYSTEM INFO
       # =========================================================
-
       - name: System Information
         shell: bash
         run: |
-          echo "===== SYSTEM ====="
-          sw_vers
+          set -e
 
+          echo "=================================================="
+          echo "SYSTEM INFORMATION"
+          echo "=================================================="
+
+          sw_vers
           echo
-          echo "===== CURRENT USER ====="
+
+          echo "Current user:"
           whoami
 
           echo
-          echo "===== CONSOLE USER ====="
+          echo "Console user:"
           stat -f "%Su" /dev/console
 
           echo
-          echo "===== GUI SESSIONS ====="
-          who
+          echo "Users:"
+          dscl . list /Users | tail -20
 
           echo
-          echo "===== DISK ====="
-          df -h
+          echo "=================================================="
 
 
       # =========================================================
-      # 2. Create / Verify macOS User
+      # 2. CREATE / VERIFY MACOS USER
       # =========================================================
-
       - name: Create macOS User
         shell: bash
         env:
@@ -53,10 +55,13 @@ jobs:
         run: |
           set -e
 
-          echo "Checking user: $MACOS_USERNAME"
+          echo "=================================================="
+          echo "CREATING / VERIFYING MACOS USER"
+          echo "=================================================="
 
           if id "$MACOS_USERNAME" >/dev/null 2>&1; then
-            echo "User already exists."
+            echo "User already exists:"
+            id "$MACOS_USERNAME"
           else
             echo "Creating user..."
 
@@ -68,24 +73,37 @@ jobs:
             echo "User created."
           fi
 
+          USER_UID=$(id -u "$MACOS_USERNAME")
+
           echo
-          echo "===== USER ====="
+          echo "Username:"
+          echo "$MACOS_USERNAME"
 
-          id "$MACOS_USERNAME"
+          echo
+          echo "UID:"
+          echo "$USER_UID"
+
+          echo
+          echo "Home:"
+          dscl . -read "/Users/$MACOS_USERNAME" NFSHomeDirectory
+
+          echo
+          echo "=================================================="
 
 
       # =========================================================
-      # 3. Configure Administrator
+      # 3. MAKE USER ADMIN
       # =========================================================
-
-      - name: Configure Administrator
+      - name: Make User Administrator
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
           set -e
 
-          echo "Adding user to admin group..."
+          echo "=================================================="
+          echo "ADDING USER TO ADMIN GROUP"
+          echo "=================================================="
 
           sudo dseditgroup \
             -o edit \
@@ -94,181 +112,146 @@ jobs:
             admin
 
           echo
-          echo "===== USER GROUPS ====="
-
-          id "$MACOS_USERNAME"
+          echo "Admin membership:"
+          dseditgroup -o checkmember -m "$MACOS_USERNAME" admin || true
 
           echo
-          echo "===== ADMIN GROUP ====="
-
-          dscl . -read /Groups/admin GroupMembership
+          echo "=================================================="
 
 
       # =========================================================
-      # 4. Configure Auto Login
+      # 4. CONFIGURE AUTO LOGIN
       # =========================================================
-
       - name: Configure Auto Login
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-        run: |
-          set +e
-
-          echo "Configuring auto login..."
-
-          sudo defaults write \
-            /Library/Preferences/com.apple.loginwindow \
-            autoLoginUser \
-            "$MACOS_USERNAME"
-
-          echo
-          echo "===== AUTO LOGIN ====="
-
-          sudo defaults read \
-            /Library/Preferences/com.apple.loginwindow \
-            autoLoginUser \
-            2>/dev/null || true
-
-
-      # =========================================================
-      # 5. Install Tailscale
-      # =========================================================
-
-      - name: Install Tailscale
-        shell: bash
+          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
         run: |
           set -e
 
-          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          echo "=================================================="
+          echo "CONFIGURING AUTO LOGIN"
+          echo "=================================================="
 
-          if command -v brew >/dev/null 2>&1; then
-            echo "Homebrew already installed."
+          sudo defaults write /Library/Preferences/com.apple.loginwindow \
+            autoLoginUser "$MACOS_USERNAME"
+
+          echo
+          echo "Auto login configured for:"
+          echo "$MACOS_USERNAME"
+
+          echo
+          echo "=================================================="
+
+
+      # =========================================================
+      # 5. INSTALL TAILSCALE
+      # =========================================================
+      - name: Install Tailscale
+        shell: bash
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          set -e
+
+          echo "=================================================="
+          echo "INSTALLING TAILSCALE"
+          echo "=================================================="
+
+          if ! command -v tailscale >/dev/null 2>&1; then
+            echo "Downloading Tailscale..."
+
+            curl -fsSL \
+              https://pkgs.tailscale.com/stable/tailscale-setup.pkg \
+              -o /tmp/tailscale.pkg
+
+            sudo installer \
+              -pkg /tmp/tailscale.pkg \
+              -target /
           else
-            echo "Installing Homebrew..."
-
-            NONINTERACTIVE=1 /bin/bash -c \
-              "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            echo "Tailscale already installed."
           fi
 
-          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          echo
+          echo "Tailscale version:"
+          tailscale version || true
 
           echo
-          echo "Installing Tailscale..."
-
-          brew install --quiet tailscale || true
-
-          echo
-          echo "===== TAILSCALE VERSION ====="
-
-          tailscale version
+          echo "=================================================="
 
 
       # =========================================================
-      # 6. Start Tailscale
+      # 6. START TAILSCALE
       # =========================================================
-
       - name: Start Tailscale
         shell: bash
         env:
           TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
         run: |
-          set +e
+          set -e
 
-          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-
-          echo "===== TAILSCALE ====="
-
-          if pgrep -x tailscaled >/dev/null 2>&1; then
-            echo "tailscaled already running."
-          else
-
-            echo "Starting tailscaled..."
-
-            sudo tailscaled \
-              --state=/tmp/tailscale-state \
-              > /tmp/tailscaled.log 2>&1 &
-
-            TAILSCALED_PID=$!
-
-            echo "tailscaled PID: $TAILSCALED_PID"
-
-            sleep 5
-
-          fi
-
-          echo
-          echo "===== TAILSCALED PROCESS ====="
-
-          pgrep -fl tailscaled || true
-
-          echo
-          echo "===== TAILSCALED LOG ====="
-
-          cat /tmp/tailscaled.log 2>/dev/null || true
-
-          echo
-          echo "===== TAILSCALE UP ====="
+          echo "=================================================="
+          echo "STARTING TAILSCALE"
+          echo "=================================================="
 
           sudo tailscale up \
             --authkey="$TAILSCALE_AUTH_KEY" \
             --hostname="github-macos-rdp"
 
-          echo
-          echo "===== TAILSCALE STATUS ====="
-
-          sudo tailscale status
+          sleep 5
 
           echo
-          echo "===== TAILSCALE IP ====="
+          echo "Tailscale status:"
+          sudo tailscale status || true
 
-          TAILSCALE_IP=$(tailscale ip -4 2>/dev/null | head -n 1)
+          echo
+          echo "Tailscale IP:"
+          tailscale ip -4 || true
 
-          echo "$TAILSCALE_IP"
-
-          echo "$TAILSCALE_IP" > /tmp/tailscale_ip
+          echo
+          echo "=================================================="
 
 
       # =========================================================
-      # 7. Install Rust
+      # 7. INSTALL RUST
       # =========================================================
-
       - name: Install Rust
         shell: bash
         run: |
           set -e
 
-          if command -v rustc >/dev/null 2>&1; then
-            echo "Rust already installed."
-          else
+          echo "=================================================="
+          echo "INSTALLING RUST"
+          echo "=================================================="
 
-            echo "Installing Rust..."
-
-            curl \
-              --proto '=https' \
+          if ! command -v cargo >/dev/null 2>&1; then
+            curl --proto '=https' \
               --tlsv1.2 \
-              -sSf https://sh.rustup.rs \
-              | sh -s -- -y
-
+              -sSf \
+              https://sh.rustup.rs | sh -s -- -y
           fi
 
           source "$HOME/.cargo/env"
 
-          echo
-          echo "===== RUST ====="
-
           rustc --version
           cargo --version
 
+          echo
+          echo "=================================================="
+
 
       # =========================================================
-      # 8. Clone macrdp
+      # 8. CLONE MACRDP
       # =========================================================
-
       - name: Clone macrdp
         shell: bash
         run: |
           set -e
+
+          echo "=================================================="
+          echo "CLONING MACRDP"
+          echo "=================================================="
 
           rm -rf "$HOME/macrdp"
 
@@ -279,107 +262,147 @@ jobs:
           cd "$HOME/macrdp"
 
           echo
-          echo "===== MACRDP FILES ====="
+          echo "Repository:"
+          git remote -v
 
-          ls -la
+          echo
+          echo "Commit:"
+          git rev-parse HEAD
+
+          echo
+          echo "=================================================="
 
 
       # =========================================================
-      # 9. Build macrdp
+      # 9. BUILD MACRDP
       # =========================================================
-
       - name: Build macrdp
         shell: bash
         run: |
           set -e
 
+          echo "=================================================="
+          echo "BUILDING MACRDP"
+          echo "=================================================="
+
           source "$HOME/.cargo/env"
 
           cd "$HOME/macrdp"
 
-          echo "===== BUILDING MACRDP ====="
-
           cargo build --release
 
           echo
-          echo "===== BUILD OUTPUT ====="
+          echo "Build completed."
 
-          ls -lh target/release/macrdp
+          ls -lh target/release/
+
+          echo
+          echo "=================================================="
 
 
       # =========================================================
-      # 10. Install macrdp
+      # 10. INSTALL MACRDP
       # =========================================================
-
       - name: Install macrdp
         shell: bash
         run: |
           set -e
 
-          MACRDP_BINARY="$HOME/macrdp/target/release/macrdp"
-
-          if [ ! -f "$MACRDP_BINARY" ]; then
-            echo "ERROR: macrdp binary not found."
-            exit 1
-          fi
+          echo "=================================================="
+          echo "INSTALLING MACRDP"
+          echo "=================================================="
 
           sudo cp \
-            "$MACRDP_BINARY" \
+            "$HOME/macrdp/target/release/macrdp" \
             /usr/local/bin/macrdp
 
-          sudo chmod +x \
-            /usr/local/bin/macrdp
+          sudo chmod +x /usr/local/bin/macrdp
 
           echo
-          echo "===== MACRDP INSTALLED ====="
+          echo "macrdp:"
+          /usr/local/bin/macrdp --help
+
+          echo
+          echo "=================================================="
+
+
+      # =========================================================
+      # 11. CHECK MACRDP BINARY
+      # =========================================================
+      - name: Check macrdp Binary
+        shell: bash
+        run: |
+          set -e
+
+          echo "=================================================="
+          echo "CHECKING MACRDP BINARY"
+          echo "=================================================="
 
           ls -lh /usr/local/bin/macrdp
 
+          file /usr/local/bin/macrdp
+
           echo
-          echo "===== MACRDP HELP ====="
+          echo "Architecture:"
+          arch
 
-          /usr/local/bin/macrdp --help
+          echo
+          echo "macrdp architecture:"
+          file /usr/local/bin/macrdp
+
+          echo
+          echo "=================================================="
 
 
       # =========================================================
-      # 11. Open macOS Permission Settings
+      # 12. OPEN MACOS PERMISSION SETTINGS
       # =========================================================
+      - name: Open macOS Permissions
+        shell: bash
+        run: |
+          echo "=================================================="
+          echo "OPENING MACOS PERMISSION SETTINGS"
+          echo "=================================================="
 
-      - name: Open macOS Permission Settings
+          open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" || true
+          open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" || true
+
+          echo
+          echo "Screen Recording / Accessibility settings opened."
+
+          echo
+          echo "=================================================="
+
+
+      # =========================================================
+      # 13. CREATE LOG DIRECTORIES
+      # =========================================================
+      - name: Prepare macrdp Logs
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
-          set +e
+          set -e
 
-          echo "Opening Screen Recording settings..."
+          TARGET_HOME=$(dscl . -read "/Users/$MACOS_USERNAME" NFSHomeDirectory | awk '{print $2}')
 
-          sudo -u "$MACOS_USERNAME" \
-            open \
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+          echo "Target home:"
+          echo "$TARGET_HOME"
 
-          sleep 3
+          sudo mkdir -p "$TARGET_HOME/Library/Logs/macrdp"
+          sudo chown -R "$MACOS_USERNAME":staff "$TARGET_HOME/Library/Logs/macrdp"
 
-          echo
-          echo "Opening Accessibility settings..."
-
-          sudo -u "$MACOS_USERNAME" \
-            open \
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-
-          sleep 3
+          sudo mkdir -p "$TARGET_HOME/Library/LaunchAgents"
+          sudo chown -R "$MACOS_USERNAME":staff "$TARGET_HOME/Library/LaunchAgents"
 
           echo
-          echo "===== CURRENT CONSOLE USER ====="
-
-          stat -f "%Su" /dev/console
+          echo "Directories ready."
 
 
       # =========================================================
-      # 12. Create LaunchAgent For MACOS_USERNAME
+      # 14. CREATE LAUNCHAGENT
       # =========================================================
-
-      - name: Create macrdp LaunchAgent For Target User
+      - name: Create macrdp LaunchAgent
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
@@ -387,851 +410,565 @@ jobs:
         run: |
           set -e
 
-          echo "===== TARGET USER LAUNCHAGENT ====="
+          echo "=================================================="
+          echo "CREATING MACRDP LAUNCHAGENT"
+          echo "=================================================="
 
-          USER_HOME=$(dscl . -read \
-            /Users/"$MACOS_USERNAME" NFSHomeDirectory \
-            | awk '{print $2}')
+          TARGET_UID=$(id -u "$MACOS_USERNAME")
+          TARGET_HOME=$(dscl . -read "/Users/$MACOS_USERNAME" NFSHomeDirectory | awk '{print $2}')
 
-          AGENT_DIR="$USER_HOME/Library/LaunchAgents"
-
-          AGENT="$AGENT_DIR/com.macrdp.server.plist"
-
-          LOG_DIR="$USER_HOME/Library/Logs/macrdp"
-
-          echo
-          echo "User:"
+          echo "Username:"
           echo "$MACOS_USERNAME"
 
-          echo
-          echo "Home:"
-          echo "$USER_HOME"
+          echo "UID:"
+          echo "$TARGET_UID"
+
+          echo "HOME:"
+          echo "$TARGET_HOME"
+
+          TMP_PLIST="/tmp/com.macrdp.server.plist"
+
+          rm -f "$TMP_PLIST"
+
+          cat > "$TMP_PLIST" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+          "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+
+              <key>Label</key>
+              <string>com.macrdp.server</string>
+
+              <key>ProgramArguments</key>
+              <array>
+                  <string>/usr/local/bin/macrdp</string>
+
+                  <string>--bind</string>
+                  <string>0.0.0.0:3390</string>
+
+                  <string>--username</string>
+                  <string>$MACOS_USERNAME</string>
+
+                  <string>--password</string>
+                  <string>$MACOS_PASSWORD</string>
+
+                  <string>--virtual-display</string>
+
+                  <string>--enable-h264</string>
+
+                  <string>--fps</string>
+                  <string>60</string>
+
+                  <string>--bitrate</string>
+                  <string>8</string>
+
+                  <string>--keyframe-interval</string>
+                  <string>2</string>
+
+                  <string>--flush-frames</string>
+                  <string>4</string>
+
+                  <string>--log-dir</string>
+                  <string>$TARGET_HOME/Library/Logs/macrdp</string>
+
+                  <string>--verbose</string>
+              </array>
+
+              <key>WorkingDirectory</key>
+              <string>$TARGET_HOME</string>
+
+              <key>EnvironmentVariables</key>
+              <dict>
+                  <key>HOME</key>
+                  <string>$TARGET_HOME</string>
+
+                  <key>USER</key>
+                  <string>$MACOS_USERNAME</string>
+
+                  <key>LOGNAME</key>
+                  <string>$MACOS_USERNAME</string>
+
+                  <key>PATH</key>
+                  <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+              </dict>
+
+              <key>RunAtLoad</key>
+              <true/>
+
+              <key>KeepAlive</key>
+              <false/>
+
+              <key>ProcessType</key>
+              <string>Interactive</string>
+
+              <key>StandardOutPath</key>
+              <string>$TARGET_HOME/Library/Logs/macrdp/stdout.log</string>
+
+              <key>StandardErrorPath</key>
+              <string>$TARGET_HOME/Library/Logs/macrdp/stderr.log</string>
+
+          </dict>
+          </plist>
+          EOF
+
+          sudo cp "$TMP_PLIST" \
+            "$TARGET_HOME/Library/LaunchAgents/com.macrdp.server.plist"
+
+          sudo chown "$MACOS_USERNAME":staff \
+            "$TARGET_HOME/Library/LaunchAgents/com.macrdp.server.plist"
+
+          chmod 644 \
+            "$TARGET_HOME/Library/LaunchAgents/com.macrdp.server.plist"
 
           echo
-          echo "Agent:"
-          echo "$AGENT"
+          echo "Validating plist..."
+
+          plutil -lint \
+            "$TARGET_HOME/Library/LaunchAgents/com.macrdp.server.plist"
 
           echo
-          echo "Log directory:"
-          echo "$LOG_DIR"
-
-          sudo mkdir -p "$AGENT_DIR"
-          sudo mkdir -p "$LOG_DIR"
-
-          sudo chown \
-            "$MACOS_USERNAME":staff \
-            "$AGENT_DIR"
-
-          sudo chown \
-            "$MACOS_USERNAME":staff \
-            "$LOG_DIR"
+          echo "LaunchAgent:"
+          cat "$TARGET_HOME/Library/LaunchAgents/com.macrdp.server.plist"
 
           echo
-          echo "Creating plist..."
-
-          python3 \
-            - "$MACOS_USERNAME" "$MACOS_PASSWORD" "$LOG_DIR" \
-            > /tmp/macrdp-target.plist <<'PY'
-          import plistlib
-          import sys
-
-          username = sys.argv[1]
-          password = sys.argv[2]
-          log_dir = sys.argv[3]
-
-          plist = {
-              "Label": "com.macrdp.server",
-
-              "ProgramArguments": [
-                  "/usr/local/bin/macrdp",
-                  "--bind",
-                  "0.0.0.0:3390",
-                  "--username",
-                  username,
-                  "--password",
-                  password,
-                  "--enable-h264",
-                  "--fps",
-                  "60",
-                  "--bitrate",
-                  "8",
-                  "--keyframe-interval",
-                  "2",
-                  "--flush-frames",
-                  "4",
-                  "--log-dir",
-                  log_dir,
-                  "--verbose"
-              ],
-
-              "RunAtLoad": True,
-              "KeepAlive": True,
-              "ThrottleInterval": 5,
-              "ProcessType": "Interactive",
-              "LimitLoadToSessionType": ["Aqua"],
-
-              "StandardOutPath":
-                  f"{log_dir}/stdout.log",
-
-              "StandardErrorPath":
-                  f"{log_dir}/stderr.log"
-          }
-
-          plistlib.dump(
-              plist,
-              sys.stdout.buffer
-          )
-          PY
-
-          sudo mv \
-            /tmp/macrdp-target.plist \
-            "$AGENT"
-
-          sudo chown \
-            "$MACOS_USERNAME":staff \
-            "$AGENT"
-
-          sudo chmod 644 \
-            "$AGENT"
-
-          echo
-          echo "===== TARGET PLIST ====="
-
-          sudo plutil -p "$AGENT"
-
-          echo
-          echo "===== VALIDATION ====="
-
-          sudo plutil -lint "$AGENT"
+          echo "=================================================="
 
 
       # =========================================================
-      # 13. Create LaunchAgent For GitHub Runner
+      # 15. DIAGNOSTIC DIRECT RUN
       # =========================================================
-
-      - name: Create macrdp LaunchAgent For Runner
+      - name: Test macrdp Directly
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
           MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
         run: |
-          set -e
-
-          echo "===== RUNNER LAUNCHAGENT ====="
-
-          RUNNER_USER=$(whoami)
-
-          RUNNER_HOME="$HOME"
-
-          RUNNER_AGENT_DIR="$RUNNER_HOME/Library/LaunchAgents"
-
-          RUNNER_AGENT="$RUNNER_AGENT_DIR/com.macrdp.server.plist"
-
-          RUNNER_LOG_DIR="$RUNNER_HOME/Library/Logs/macrdp"
-
-          echo
-          echo "Runner:"
-          echo "$RUNNER_USER"
-
-          echo
-          echo "Runner home:"
-          echo "$RUNNER_HOME"
-
-          echo
-          echo "Runner agent:"
-          echo "$RUNNER_AGENT"
-
-          mkdir -p "$RUNNER_AGENT_DIR"
-          mkdir -p "$RUNNER_LOG_DIR"
-
-          python3 \
-            - "$MACOS_USERNAME" "$MACOS_PASSWORD" "$RUNNER_LOG_DIR" \
-            > /tmp/macrdp-runner.plist <<'PY'
-          import plistlib
-          import sys
-
-          username = sys.argv[1]
-          password = sys.argv[2]
-          log_dir = sys.argv[3]
-
-          plist = {
-              "Label": "com.macrdp.server",
-
-              "ProgramArguments": [
-                  "/usr/local/bin/macrdp",
-                  "--bind",
-                  "0.0.0.0:3390",
-                  "--username",
-                  username,
-                  "--password",
-                  password,
-                  "--enable-h264",
-                  "--fps",
-                  "60",
-                  "--bitrate",
-                  "8",
-                  "--keyframe-interval",
-                  "2",
-                  "--flush-frames",
-                  "4",
-                  "--log-dir",
-                  log_dir,
-                  "--verbose"
-              ],
-
-              "RunAtLoad": True,
-              "KeepAlive": True,
-              "ThrottleInterval": 5,
-              "ProcessType": "Interactive",
-              "LimitLoadToSessionType": ["Aqua"],
-
-              "StandardOutPath":
-                  f"{log_dir}/stdout.log",
-
-              "StandardErrorPath":
-                  f"{log_dir}/stderr.log"
-          }
-
-          plistlib.dump(
-              plist,
-              sys.stdout.buffer
-          )
-          PY
-
-          mv \
-            /tmp/macrdp-runner.plist \
-            "$RUNNER_AGENT"
-
-          chmod 644 \
-            "$RUNNER_AGENT"
-
-          echo
-          echo "===== RUNNER PLIST ====="
-
-          plutil -p "$RUNNER_AGENT"
-
-          echo
-          echo "===== VALIDATION ====="
-
-          plutil -lint "$RUNNER_AGENT"
-
-
-      # =========================================================
-      # 14. Stop Existing macrdp
-      # =========================================================
-
-      - name: Stop Existing macrdp
-        shell: bash
-        run: |
           set +e
 
-          echo "Stopping existing macrdp..."
+          echo "=================================================="
+          echo "DIRECT MACRDP TEST"
+          echo "=================================================="
 
-          pkill \
-            -f "/usr/local/bin/macrdp" \
-            || true
+          TARGET_HOME=$(dscl . -read "/Users/$MACOS_USERNAME" NFSHomeDirectory | awk '{print $2}')
 
-          sleep 2
+          mkdir -p /tmp/macrdp-debug
 
-          echo
-          echo "Remaining processes:"
-
-          pgrep -fl macrdp || true
-
-
-      # =========================================================
-      # 15. Start macrdp For Current Console User
-      # =========================================================
-
-      - name: Start macrdp
-        shell: bash
-        run: |
-          set +e
-
-          echo "===== START MACRDP ====="
-
-          CONSOLE_USER=$(stat -f "%Su" /dev/console)
+          rm -f /tmp/macrdp-debug/*
 
           echo
-          echo "Console user:"
-          echo "$CONSOLE_USER"
+          echo "Running macrdp directly..."
 
           echo
-          echo "GUI sessions:"
-          who
+          echo "Command:"
+          echo "/usr/local/bin/macrdp --bind 127.0.0.1:3390 --username USER --password ****** --virtual-display --verbose"
 
-          if [ -z "$CONSOLE_USER" ] || [ "$CONSOLE_USER" = "root" ]; then
+          sudo -u "$MACOS_USERNAME" \
+            env \
+              HOME="$TARGET_HOME" \
+              USER="$MACOS_USERNAME" \
+              LOGNAME="$MACOS_USERNAME" \
+              PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+            /usr/local/bin/macrdp \
+              --bind 127.0.0.1:3390 \
+              --username "$MACOS_USERNAME" \
+              --password "$MACOS_PASSWORD" \
+              --virtual-display \
+              --verbose \
+              > /tmp/macrdp-debug/direct.stdout.log \
+              2> /tmp/macrdp-debug/direct.stderr.log &
 
-            echo
-            echo "No normal GUI user detected."
-
-            exit 0
-
-          fi
-
-          if ! id "$CONSOLE_USER" >/dev/null 2>&1; then
-
-            echo
-            echo "Console user does not exist."
-
-            exit 0
-
-          fi
-
-          CONSOLE_UID=$(id -u "$CONSOLE_USER")
-
-          CONSOLE_HOME=$(dscl . -read \
-            /Users/"$CONSOLE_USER" NFSHomeDirectory \
-            | awk '{print $2}')
-
-          AGENT="$CONSOLE_HOME/Library/LaunchAgents/com.macrdp.server.plist"
+          MACRDP_PID=$!
 
           echo
-          echo "UID:"
-          echo "$CONSOLE_UID"
-
-          echo
-          echo "Home:"
-          echo "$CONSOLE_HOME"
-
-          echo
-          echo "Agent:"
-          echo "$AGENT"
-
-          if [ ! -f "$AGENT" ]; then
-
-            echo
-            echo "WARNING:"
-            echo "LaunchAgent does not exist for $CONSOLE_USER."
-
-            echo
-            echo "This should only happen if the console user"
-            echo "is a temporary system user."
-
-            exit 0
-
-          fi
-
-          echo
-          echo "Booting LaunchAgent..."
-
-          sudo launchctl bootout \
-            "gui/$CONSOLE_UID/com.macrdp.server" \
-            2>/dev/null \
-            || true
-
-          sleep 1
-
-          sudo launchctl bootstrap \
-            "gui/$CONSOLE_UID" \
-            "$AGENT"
-
-          BOOT_RESULT=$?
-
-          echo
-          echo "Bootstrap result:"
-          echo "$BOOT_RESULT"
-
-          if [ "$BOOT_RESULT" -ne 0 ]; then
-
-            echo
-            echo "WARNING:"
-            echo "Bootstrap failed."
-
-          fi
-
-          echo
-          echo "Enabling service..."
-
-          sudo launchctl enable \
-            "gui/$CONSOLE_UID/com.macrdp.server" \
-            2>/dev/null \
-            || true
-
-          echo
-          echo "Kickstarting service..."
-
-          sudo launchctl kickstart \
-            -k \
-            "gui/$CONSOLE_UID/com.macrdp.server"
+          echo "PID:"
+          echo "$MACRDP_PID"
 
           sleep 8
 
           echo
-          echo "===== MACRDP PROCESS ====="
+          echo "=================================================="
+          echo "DIRECT PROCESS STATUS"
+          echo "=================================================="
 
-          pgrep -fl macrdp || true
-
-          echo
-          echo "===== PORT 3390 ====="
-
-          lsof \
-            -nP \
-            -iTCP:3390 \
-            -sTCP:LISTEN \
-            2>/dev/null \
-            || true
+          ps aux | grep '[m]acrdp' || true
 
           echo
-          echo "===== LAUNCHCTL STATUS ====="
+          echo "=================================================="
+          echo "PORT STATUS"
+          echo "=================================================="
 
-          sudo launchctl print \
-            "gui/$CONSOLE_UID/com.macrdp.server" \
-            2>/dev/null \
-            || true
-
-
-      # =========================================================
-      # 16. Monitor User Switch
-      # =========================================================
-
-      - name: Monitor GUI User
-        shell: bash
-        run: |
-          set +e
+          lsof -nP -iTCP:3390 -sTCP:LISTEN || true
 
           echo
-          echo "======================================================"
-          echo "             GUI USER MONITOR STARTED"
-          echo "======================================================"
+          echo "=================================================="
+          echo "DIRECT STDOUT"
+          echo "=================================================="
 
-          LAST_USER=""
-
-          start_macrdp_for_user() {
-
-            TARGET_USER="$1"
-
-            echo
-            echo "=================================================="
-            echo "Starting macrdp for GUI user:"
-            echo "$TARGET_USER"
-            echo "=================================================="
-
-            if ! id "$TARGET_USER" >/dev/null 2>&1; then
-
-              echo "User does not exist."
-
-              return
-
-            fi
-
-            TARGET_UID=$(id -u "$TARGET_USER")
-
-            TARGET_HOME=$(dscl . -read \
-              /Users/"$TARGET_USER" NFSHomeDirectory \
-              | awk '{print $2}')
-
-            AGENT="$TARGET_HOME/Library/LaunchAgents/com.macrdp.server.plist"
-
-            echo
-            echo "UID:"
-            echo "$TARGET_UID"
-
-            echo
-            echo "HOME:"
-            echo "$TARGET_HOME"
-
-            echo
-            echo "AGENT:"
-            echo "$AGENT"
-
-            if [ ! -f "$AGENT" ]; then
-
-              echo
-              echo "LaunchAgent not found."
-
-              echo
-              echo "Cannot start macrdp for this GUI user."
-
-              return
-
-            fi
-
-            echo
-            echo "Stopping existing macrdp..."
-
-            pkill \
-              -f "/usr/local/bin/macrdp" \
-              || true
-
-            sleep 2
-
-            echo
-            echo "Removing old LaunchAgent instance..."
-
-            sudo launchctl bootout \
-              "gui/$TARGET_UID/com.macrdp.server" \
-              2>/dev/null \
-              || true
-
-            sleep 1
-
-            echo
-            echo "Bootstrapping LaunchAgent..."
-
-            sudo launchctl bootstrap \
-              "gui/$TARGET_UID" \
-              "$AGENT"
-
-            BOOT_RESULT=$?
-
-            echo
-            echo "Bootstrap result:"
-            echo "$BOOT_RESULT"
-
-            if [ "$BOOT_RESULT" -ne 0 ]; then
-
-              echo
-              echo "Bootstrap failed."
-
-              return
-
-            fi
-
-            echo
-            echo "Enabling service..."
-
-            sudo launchctl enable \
-              "gui/$TARGET_UID/com.macrdp.server" \
-              2>/dev/null \
-              || true
-
-            echo
-            echo "Starting service..."
-
-            sudo launchctl kickstart \
-              -k \
-              "gui/$TARGET_UID/com.macrdp.server"
-
-            sleep 6
-
-            echo
-            echo "===== MACRDP PROCESS ====="
-
-            pgrep -fl macrdp || true
-
-            echo
-            echo "===== PORT 3390 ====="
-
-            lsof \
-              -nP \
-              -iTCP:3390 \
-              -sTCP:LISTEN \
-              2>/dev/null \
-              || true
-
-            echo
-            echo "===== SERVICE STATUS ====="
-
-            sudo launchctl print \
-              "gui/$TARGET_UID/com.macrdp.server" \
-              2>/dev/null \
-              || true
-
-            echo
-            echo "===== USER LOGS ====="
-
-            find \
-              "$TARGET_HOME/Library/Logs/macrdp" \
-              -type f \
-              -maxdepth 2 \
-              -print \
-              2>/dev/null \
-              || true
-          }
-
-
-          # =====================================================
-          # Initial User
-          # =====================================================
-
-          CURRENT_USER=$(stat -f "%Su" /dev/console 2>/dev/null)
+          cat /tmp/macrdp-debug/direct.stdout.log 2>/dev/null || true
 
           echo
-          echo "Initial console user:"
-          echo "$CURRENT_USER"
+          echo "=================================================="
+          echo "DIRECT STDERR"
+          echo "=================================================="
 
-          if [ -n "$CURRENT_USER" ] && [ "$CURRENT_USER" != "root" ]; then
+          cat /tmp/macrdp-debug/direct.stderr.log 2>/dev/null || true
 
-            LAST_USER="$CURRENT_USER"
+          echo
+          echo "=================================================="
+          echo "MACRDP INTERNAL LOGS"
+          echo "=================================================="
 
-            start_macrdp_for_user "$CURRENT_USER"
+          find "$TARGET_HOME/Library/Logs/macrdp" \
+            -maxdepth 1 \
+            -type f \
+            -print \
+            2>/dev/null || true
 
-          fi
+          echo
+          echo "=================================================="
+          echo "CONTENTS OF MACRDP LOGS"
+          echo "=================================================="
 
+          for LOG in \
+            "$TARGET_HOME/Library/Logs/macrdp/stdout.log" \
+            "$TARGET_HOME/Library/Logs/macrdp/stderr.log" \
+            "$TARGET_HOME/Library/Logs/macrdp/macrdp.log"
+          do
 
-          # =====================================================
-          # Main Monitor
-          # =====================================================
+            echo
+            echo "--------------------------------------------------"
+            echo "LOG: $LOG"
+            echo "--------------------------------------------------"
 
-          while true; do
-
-            CURRENT_USER=$(stat -f "%Su" /dev/console 2>/dev/null)
-
-            if [ -z "$CURRENT_USER" ]; then
-
-              sleep 5
-
-              continue
-
+            if [ -f "$LOG" ]; then
+              tail -n 300 "$LOG" || true
+            else
+              echo "Log does not exist."
             fi
-
-            if [ "$CURRENT_USER" = "root" ]; then
-
-              sleep 5
-
-              continue
-
-            fi
-
-
-            # ---------------------------------------------------
-            # Detect Switch User
-            # ---------------------------------------------------
-
-            if [ "$CURRENT_USER" != "$LAST_USER" ]; then
-
-              echo
-              echo
-              echo "=================================================="
-              echo "             SWITCH USER DETECTED"
-              echo "=================================================="
-
-              echo
-              echo "Previous user:"
-              echo "$LAST_USER"
-
-              echo
-              echo "New console user:"
-              echo "$CURRENT_USER"
-
-              echo
-
-              LAST_USER="$CURRENT_USER"
-
-              start_macrdp_for_user "$CURRENT_USER"
-
-            fi
-
-
-            # ---------------------------------------------------
-            # Detect macrdp crash
-            # ---------------------------------------------------
-
-            if ! pgrep \
-              -f "/usr/local/bin/macrdp" \
-              >/dev/null 2>&1; then
-
-              echo
-              echo "=================================================="
-              echo "macrdp is not running."
-              echo "Restarting..."
-              echo "=================================================="
-
-              start_macrdp_for_user "$CURRENT_USER"
-
-            fi
-
-            sleep 5
 
           done
 
+          echo
+          echo "=================================================="
+          echo "DIRECT TEST COMPLETE"
+          echo "=================================================="
+
+          echo
+          echo "Stopping diagnostic process..."
+
+          kill "$MACRDP_PID" 2>/dev/null || true
+          pkill -f '/usr/local/bin/macrdp' 2>/dev/null || true
+
+          sleep 2
+
+          echo
+          echo "=================================================="
+
 
       # =========================================================
-      # 17. Connection Information
+      # 16. START LAUNCHAGENT ONLY AFTER DIAGNOSTIC
       # =========================================================
+      - name: Start macrdp LaunchAgent
+        shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+        run: |
+          set -e
 
+          echo "=================================================="
+          echo "STARTING MACRDP LAUNCHAGENT"
+          echo "=================================================="
+
+          TARGET_UID=$(id -u "$MACOS_USERNAME")
+          TARGET_HOME=$(dscl . -read "/Users/$MACOS_USERNAME" NFSHomeDirectory | awk '{print $2}')
+
+          echo
+          echo "Current console user:"
+          stat -f "%Su" /dev/console
+
+          echo
+          echo "Target user:"
+          echo "$MACOS_USERNAME"
+
+          echo
+          echo "Target UID:"
+          echo "$TARGET_UID"
+
+          echo
+          echo "Target HOME:"
+          echo "$TARGET_HOME"
+
+          echo
+          echo "Booting LaunchAgent..."
+
+          sudo -u "$MACOS_USERNAME" \
+            launchctl bootout \
+            "gui/$TARGET_UID/com.macrdp.server" \
+            2>/dev/null || true
+
+          sleep 2
+
+          sudo -u "$MACOS_USERNAME" \
+            launchctl bootstrap \
+            "gui/$TARGET_UID" \
+            "$TARGET_HOME/Library/LaunchAgents/com.macrdp.server.plist"
+
+          echo
+          echo "Bootstrap successful."
+
+          sudo -u "$MACOS_USERNAME" \
+            launchctl enable \
+            "gui/$TARGET_UID/com.macrdp.server" \
+            || true
+
+          sudo -u "$MACOS_USERNAME" \
+            launchctl kickstart \
+            -k \
+            "gui/$TARGET_UID/com.macrdp.server" \
+            || true
+
+          echo
+          echo "Waiting for macrdp..."
+
+          sleep 10
+
+          echo
+          echo "=================================================="
+          echo "MACRDP PROCESS"
+          echo "=================================================="
+
+          ps aux | grep '[m]acrdp' || true
+
+          echo
+          echo "=================================================="
+          echo "PORT 3390"
+          echo "=================================================="
+
+          lsof -nP -iTCP:3390 -sTCP:LISTEN || true
+
+          echo
+          echo "=================================================="
+          echo "SERVICE STATUS"
+          echo "=================================================="
+
+          sudo -u "$MACOS_USERNAME" \
+            launchctl print \
+            "gui/$TARGET_UID/com.macrdp.server" \
+            || true
+
+          echo
+          echo "=================================================="
+          echo "LAUNCHAGENT LOGS"
+          echo "=================================================="
+
+          for LOG in \
+            "$TARGET_HOME/Library/Logs/macrdp/stdout.log" \
+            "$TARGET_HOME/Library/Logs/macrdp/stderr.log" \
+            "$TARGET_HOME/Library/Logs/macrdp/macrdp.log"
+          do
+
+            echo
+            echo "--------------------------------------------------"
+            echo "LOG: $LOG"
+            echo "--------------------------------------------------"
+
+            if [ -f "$LOG" ]; then
+              tail -n 300 "$LOG" || true
+            else
+              echo "Log does not exist."
+            fi
+
+          done
+
+          echo
+          echo "=================================================="
+
+
+      # =========================================================
+      # 17. CHECK WHETHER MACRDP IS ACTUALLY RUNNING
+      # =========================================================
+      - name: Verify macrdp
+        shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+        run: |
+          set +e
+
+          TARGET_UID=$(id -u "$MACOS_USERNAME")
+          TARGET_HOME=$(dscl . -read "/Users/$MACOS_USERNAME" NFSHomeDirectory | awk '{print $2}')
+
+          echo "=================================================="
+          echo "FINAL MACRDP VERIFICATION"
+          echo "=================================================="
+
+          echo
+          echo "Process:"
+          ps aux | grep '[m]acrdp' || true
+
+          echo
+          echo "Port:"
+          lsof -nP -iTCP:3390 -sTCP:LISTEN || true
+
+          echo
+          echo "Launchctl:"
+          sudo -u "$MACOS_USERNAME" \
+            launchctl print \
+            "gui/$TARGET_UID/com.macrdp.server" \
+            2>&1 || true
+
+          echo
+          echo "=================================================="
+          echo "STDOUT"
+          echo "=================================================="
+
+          cat "$TARGET_HOME/Library/Logs/macrdp/stdout.log" \
+            2>/dev/null || true
+
+          echo
+          echo "=================================================="
+          echo "STDERR"
+          echo "=================================================="
+
+          cat "$TARGET_HOME/Library/Logs/macrdp/stderr.log" \
+            2>/dev/null || true
+
+          echo
+          echo "=================================================="
+          echo "MACRDP LOG"
+          echo "=================================================="
+
+          cat "$TARGET_HOME/Library/Logs/macrdp/macrdp.log" \
+            2>/dev/null || true
+
+          echo
+          echo "=================================================="
+
+
+      # =========================================================
+      # 18. CONNECTION INFO
+      # =========================================================
       - name: Connection Information
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
-          set +e
-
-          TAILSCALE_IP=$(cat /tmp/tailscale_ip 2>/dev/null)
-
-          if [ -z "$TAILSCALE_IP" ]; then
-
-            TAILSCALE_IP=$(tailscale ip -4 2>/dev/null | head -n 1)
-
-          fi
+          echo "=================================================="
+          echo "CONNECTION INFORMATION"
+          echo "=================================================="
 
           echo
-          echo "======================================================"
-          echo "              RDP CONNECTION INFO"
-          echo "======================================================"
+          echo "Tailscale IPv4:"
+          tailscale ip -4 || true
 
           echo
-          echo "Tailscale IP:"
-          echo "$TAILSCALE_IP"
-
-          echo
-          echo "RDP Address:"
-          echo "$TAILSCALE_IP:3390"
+          echo "RDP Port:"
+          echo "3390"
 
           echo
           echo "Username:"
           echo "$MACOS_USERNAME"
 
           echo
-          echo "Password:"
-          echo "Use MACOS_PASSWORD GitHub Secret"
+          echo "Connect using Microsoft Remote Desktop:"
+          echo
+          echo "ADDRESS:"
+          echo "$(tailscale ip -4 2>/dev/null):3390"
 
           echo
-          echo "======================================================"
-
-          echo
-          echo "Microsoft Remote Desktop PC:"
-
-          echo "$TAILSCALE_IP:3390"
-
-          echo
-          echo "======================================================"
+          echo "=================================================="
 
 
       # =========================================================
-      # 18. Final Diagnostic
+      # 19. KEEP RUNNER ALIVE
       # =========================================================
-
-      - name: Final Diagnostic
-        shell: bash
-        run: |
-          set +e
-
-          echo
-          echo "===== FINAL DIAGNOSTIC ====="
-
-          echo
-          echo "Console user:"
-
-          stat -f "%Su" /dev/console
-
-          echo
-          echo "Logged users:"
-
-          who
-
-          echo
-          echo "macrdp processes:"
-
-          pgrep -fl macrdp || true
-
-          echo
-          echo "Port 3390:"
-
-          lsof \
-            -nP \
-            -iTCP:3390 \
-            -sTCP:LISTEN \
-            2>/dev/null \
-            || true
-
-          echo
-          echo "Tailscale status:"
-
-          tailscale status \
-            2>/dev/null \
-            || true
-
-          echo
-          echo "Tailscale IP:"
-
-          tailscale ip -4 \
-            2>/dev/null \
-            || true
-
-          echo
-          echo "===== DIAGNOSTIC COMPLETE ====="
-
-
-      # =========================================================
-      # 19. Keep Runner Alive
-      # =========================================================
-
       - name: Keep Runner Alive
         shell: bash
         run: |
-          echo
-          echo "======================================================"
-          echo "             macOS RDP SESSION ACTIVE"
-          echo "======================================================"
+          echo "=================================================="
+          echo "KEEPING RUNNER ALIVE"
+          echo "=================================================="
+
+          SECONDS=20400
 
           echo
-          echo "Tailscale: ACTIVE"
+          echo "Runner will remain alive for:"
+          echo "$SECONDS seconds"
 
           echo
-          echo "macrdp: ACTIVE"
+          echo "Monitoring macrdp..."
+
+          END=$((SECONDS + $(date +%s)))
+
+          while [ "$(date +%s)" -lt "$END" ]; do
+
+            CURRENT_USER=$(stat -f "%Su" /dev/console)
+
+            echo
+            echo "=================================================="
+            echo "TIME: $(date)"
+            echo "CONSOLE USER: $CURRENT_USER"
+            echo "=================================================="
+
+            echo
+            echo "macrdp process:"
+            ps aux | grep '[m]acrdp' || echo "macrdp not running"
+
+            echo
+            echo "port 3390:"
+            lsof -nP -iTCP:3390 -sTCP:LISTEN || echo "port 3390 not listening"
+
+            sleep 60
+
+          done
 
           echo
-          echo "GUI user monitor: ACTIVE"
-
-          echo
-          echo "Switch User detection: ACTIVE"
-
-          echo
-          echo "Runner will stay alive."
-
-          echo
-
-          sleep 20400
+          echo "=================================================="
+          echo "KEEP-ALIVE FINISHED"
+          echo "=================================================="
 
 
       # =========================================================
-      # 20. Cleanup
+      # 20. CLEANUP
       # =========================================================
-
       - name: Cleanup
         if: always()
         shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
-          set +e
+          echo "=================================================="
+          echo "CLEANUP"
+          echo "=================================================="
 
-          echo
-          echo "===== CLEANUP ====="
+          pkill -f '/usr/local/bin/macrdp' 2>/dev/null || true
 
-          echo
-          echo "Stopping macrdp..."
+          TARGET_UID=$(id -u "$MACOS_USERNAME" 2>/dev/null || true)
 
-          pkill \
-            -f "/usr/local/bin/macrdp" \
-            || true
+          if [ -n "$TARGET_UID" ]; then
 
-          CURRENT_USER=$(stat -f "%Su" /dev/console 2>/dev/null)
-
-          if [ -n "$CURRENT_USER" ] && [ "$CURRENT_USER" != "root" ]; then
-
-            CURRENT_UID=$(id -u "$CURRENT_USER")
-
-            echo
-            echo "Stopping LaunchAgent for:"
-            echo "$CURRENT_USER"
-
-            sudo launchctl bootout \
-              "gui/$CURRENT_UID/com.macrdp.server" \
-              2>/dev/null \
-              || true
+            sudo -u "$MACOS_USERNAME" \
+              launchctl bootout \
+              "gui/$TARGET_UID/com.macrdp.server" \
+              2>/dev/null || true
 
           fi
 
           echo
-          echo "Stopping Tailscale..."
-
-          sudo tailscale down \
-            || true
-
-          echo
           echo "Cleanup complete."
 
+          echo
+          echo "=================================================="
+
 
       # =========================================================
-      # 21. Final
+      # 21. FINAL
       # =========================================================
-
       - name: Final
         if: always()
         shell: bash
         run: |
           echo
-          echo "======================================================"
-          echo "              WORKFLOW FINISHED"
-          echo "======================================================"
+          echo "=================================================="
+          echo "WORKFLOW FINISHED"
+          echo "=================================================="
