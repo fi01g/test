@@ -34,17 +34,7 @@ jobs:
           echo
           id
           echo
-
-          echo "Architecture:"
           uname -m
-
-          echo
-          echo "Current user:"
-          echo "$USER"
-
-          echo
-          echo "Home:"
-          echo "$HOME"
 
       # =========================================================
       # 2. CREATE MACOS USER
@@ -71,11 +61,6 @@ jobs:
 
             NEXT_UID=$((NEXT_UID + 1))
 
-            echo "Creating user:"
-            echo "$MACOS_USERNAME"
-            echo "UID:"
-            echo "$NEXT_UID"
-
             sudo dscl . -create "/Users/$MACOS_USERNAME"
             sudo dscl . -create "/Users/$MACOS_USERNAME" UserShell /bin/zsh
             sudo dscl . -create "/Users/$MACOS_USERNAME" RealName "$MACOS_USERNAME"
@@ -85,15 +70,17 @@ jobs:
 
             sudo mkdir -p "/Users/$MACOS_USERNAME"
 
-            sudo chown -R "$MACOS_USERNAME:staff" \
+            sudo chown -R \
+              "$MACOS_USERNAME:staff" \
               "/Users/$MACOS_USERNAME"
 
-            sudo dscl . -passwd "/Users/$MACOS_USERNAME" "$MACOS_PASSWORD"
+            sudo dscl . -passwd \
+              "/Users/$MACOS_USERNAME" \
+              "$MACOS_PASSWORD"
 
             echo "User created."
           fi
 
-          echo
           id "$MACOS_USERNAME"
 
       # =========================================================
@@ -114,8 +101,7 @@ jobs:
             -a "$MACOS_USERNAME" \
             -t user admin
 
-          echo "Admin group:"
-          dseditgroup -o checkmember \
+          sudo dseditgroup -o checkmember \
             -m "$MACOS_USERNAME" admin || true
 
       # =========================================================
@@ -125,7 +111,6 @@ jobs:
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
         run: |
           set +e
 
@@ -143,137 +128,103 @@ jobs:
             DisableFDEAutoLogin \
             -bool false
 
-          echo "Auto-login configuration written."
-
           sudo defaults read \
             /Library/Preferences/com.apple.loginwindow \
             autoLoginUser || true
 
       # =========================================================
-      # 5. REMOVE GUI TAILSCALE
+      # 5. INSTALL TAILSCALE
       # =========================================================
-      - name: Remove GUI Tailscale
-        shell: bash
-        run: |
-          set +e
-
-          echo "=================================================="
-          echo "REMOVING GUI TAILSCALE"
-          echo "=================================================="
-
-          echo "Existing Tailscale processes:"
-          ps aux | grep -i tailscale | grep -v grep || true
-
-          echo
-          echo "Stopping GUI Tailscale..."
-
-          sudo pkill -f "/Applications/Tailscale.app" 2>/dev/null || true
-
-          sleep 3
-
-          echo "Removing Tailscale.app..."
-
-          sudo rm -rf "/Applications/Tailscale.app"
-
-          echo "Removing old CLI launcher..."
-
-          sudo rm -f /usr/local/bin/tailscale
-
-          echo "GUI Tailscale removed."
-
-      # =========================================================
-      # 6. INSTALL HOMEBREW TAILSCALE CLI
-      # =========================================================
-      - name: Install Tailscale CLI Only
+      - name: Install Tailscale
         shell: bash
         run: |
           set -e
 
           echo "=================================================="
-          echo "INSTALLING TAILSCALE CLI-ONLY"
+          echo "INSTALLING TAILSCALE"
           echo "=================================================="
 
-          if command -v brew >/dev/null 2>&1; then
-            echo "Homebrew already installed."
-          else
-            echo "Homebrew not found."
+          TAILSCALE_PKG="/tmp/Tailscale.pkg"
 
-            /bin/bash -c \
-              "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          fi
+          curl -fL \
+            "https://pkgs.tailscale.com/stable/Tailscale-latest-macos.pkg" \
+            -o "$TAILSCALE_PKG"
 
-          if [ -x "/opt/homebrew/bin/brew" ]; then
-            eval "$(/opt/homebrew/bin/brew shellenv)"
-          fi
-
-          if [ -x "/usr/local/bin/brew" ]; then
-            eval "$(/usr/local/bin/brew shellenv)"
-          fi
+          sudo installer \
+            -pkg "$TAILSCALE_PKG" \
+            -target /
 
           echo
-          echo "Homebrew:"
-          command -v brew
-
-          brew update
-
-          echo
-          echo "Installing Tailscale formula..."
-
-          brew install tailscale
+          echo "Tailscale installed."
 
           echo
           echo "Tailscale binaries:"
 
-          which tailscale || true
-          which tailscaled || true
+          ls -lah /usr/local/bin/tailscale 2>/dev/null || true
+          ls -lah /usr/local/bin/tailscaled 2>/dev/null || true
 
           echo
-          echo "Tailscale version:"
-
-          tailscale version || true
-          tailscaled --version || true
+          echo "Processes:"
+          ps aux | grep -i tailscale | grep -v grep || true
 
       # =========================================================
-      # 7. INSTALL TAILSCALED SYSTEM DAEMON
+      # 6. START TAILSCALED
       # =========================================================
-      - name: Install Tailscale System Daemon
+      - name: Start Tailscaled
         shell: bash
         run: |
           set +e
 
           echo "=================================================="
-          echo "INSTALLING TAILSCALED SYSTEM DAEMON"
+          echo "STARTING TAILSCALED"
           echo "=================================================="
 
-          TAILSCALED_BIN="$(which tailscaled)"
+          TAILSCALED_BIN="/usr/local/bin/tailscaled"
+
+          if [ ! -x "$TAILSCALED_BIN" ]; then
+            echo "ERROR: tailscaled not found:"
+            ls -lah /usr/local/bin/ | grep -i tailscale || true
+            exit 1
+          fi
 
           echo "tailscaled:"
           echo "$TAILSCALED_BIN"
 
-          if [ ! -x "$TAILSCALED_BIN" ]; then
-            echo "ERROR: tailscaled was not found."
-            exit 1
+          echo
+          echo "Existing process:"
+          ps aux | grep tailscaled | grep -v grep || true
+
+          echo
+          echo "LaunchDaemon:"
+          sudo ls -lah /Library/LaunchDaemons |
+            grep -i tailscale || true
+
+          # If the daemon is already running, don't start another one.
+          if pgrep -f "/usr/local/bin/tailscaled" >/dev/null 2>&1; then
+            echo
+            echo "tailscaled is already running."
+          else
+            echo
+            echo "Starting tailscaled manually..."
+
+            sudo "$TAILSCALED_BIN" \
+              --state=/var/lib/tailscale/tailscaled.state \
+              >/tmp/tailscaled.stdout 2>/tmp/tailscaled.stderr &
+
+            TAILSCALED_PID=$!
+
+            echo "tailscaled PID:"
+            echo "$TAILSCALED_PID"
           fi
 
-          echo
-          echo "Installing launchd system daemon..."
-
-          sudo "$TAILSCALED_BIN" install-system-daemon
-
-          sleep 5
+          sleep 3
 
           echo
-          echo "Checking launchd:"
-
-          sudo launchctl list | grep -i tailscale || true
-
-          echo
-          echo "Checking processes:"
-
-          ps aux | grep -i tailscaled | grep -v grep || true
+          echo "Current tailscaled process:"
+          ps aux | grep tailscaled | grep -v grep || true
 
       # =========================================================
-      # 8. WAIT FOR TAILSCALED
+      # 7. WAIT FOR TAILSCALED API
       # =========================================================
       - name: Wait For Tailscaled
         shell: bash
@@ -288,43 +239,66 @@ jobs:
 
           for i in $(seq 1 60); do
 
-            if sudo tailscale status >/tmp/tailscale-status 2>/tmp/tailscale-status.err; then
-              echo "Tailscaled is responding."
+            OUTPUT=$(sudo /usr/local/bin/tailscale status \
+              2>&1)
+
+            EXIT_CODE=$?
+
+            echo "Waiting... $i/60"
+
+            # IMPORTANT:
+            # "Logged out." means the daemon is responding.
+            # It does NOT mean tailscaled is broken.
+            if echo "$OUTPUT" | grep -qi "Logged out"; then
+              echo
+              echo "tailscaled is READY."
+              echo "Current state: Logged out"
               READY=1
               break
             fi
 
-            echo "Waiting... $i/60"
+            # Any valid status response also means the daemon
+            # is responding.
+            if [ "$EXIT_CODE" -eq 0 ]; then
+              echo
+              echo "tailscaled is READY."
+              echo "$OUTPUT"
+              READY=1
+              break
+            fi
 
             sleep 1
           done
 
           if [ "$READY" -ne 1 ]; then
+
             echo
             echo "ERROR: tailscaled did not become ready."
 
             echo
             echo "tailscale status:"
-            cat /tmp/tailscale-status 2>/dev/null || true
+            sudo /usr/local/bin/tailscale status \
+              2>&1 || true
 
             echo
-            echo "tailscale stderr:"
-            cat /tmp/tailscale-status.err 2>/dev/null || true
+            echo "tailscaled stdout:"
+            cat /tmp/tailscaled.stdout \
+              2>/dev/null || true
+
+            echo
+            echo "tailscaled stderr:"
+            cat /tmp/tailscaled.stderr \
+              2>/dev/null || true
 
             echo
             echo "Processes:"
             ps aux | grep -i tailscale | grep -v grep || true
 
-            echo
-            echo "LaunchDaemons:"
-            sudo ls -lah /Library/LaunchDaemons |
-              grep -i tailscale || true
-
             exit 1
           fi
 
       # =========================================================
-      # 9. AUTHENTICATE TAILSCALE
+      # 8. AUTHENTICATE TAILSCALE
       # =========================================================
       - name: Authenticate Tailscale
         shell: bash
@@ -337,47 +311,60 @@ jobs:
           echo "AUTHENTICATING TAILSCALE"
           echo "=================================================="
 
+          TAILSCALE_BIN="/usr/local/bin/tailscale"
+
           if [ -z "$TAILSCALE_AUTH_KEY" ]; then
             echo "ERROR: TAILSCALE_AUTH_KEY is empty."
             exit 1
           fi
 
-          echo "tailscale:"
-          which tailscale
-
           echo
-          echo "Running tailscale up..."
+          echo "Checking current state first..."
 
-          sudo tailscale up \
-            --auth-key="$TAILSCALE_AUTH_KEY" \
-            --hostname="github-macos-rdp"
+          CURRENT_STATUS=$(
+            sudo "$TAILSCALE_BIN" status 2>&1
+          )
 
-          EXIT_CODE=$?
+          echo "$CURRENT_STATUS"
 
-          echo
-          echo "tailscale up exit code:"
-          echo "$EXIT_CODE"
-
-          if [ "$EXIT_CODE" -ne 0 ]; then
-            echo
-            echo "ERROR: Tailscale authentication failed."
+          # If already authenticated, DON'T run tailscale up again.
+          if ! echo "$CURRENT_STATUS" | grep -qi "Logged out"; then
 
             echo
-            echo "tailscale status:"
-            sudo tailscale status || true
+            echo "Tailscale appears to be authenticated already."
+            echo "Skipping tailscale up."
+
+          else
 
             echo
-            echo "tailscaled process:"
-            ps aux | grep -i tailscaled | grep -v grep || true
+            echo "Tailscale is logged out."
+            echo "Running tailscale up..."
 
-            exit "$EXIT_CODE"
+            sudo "$TAILSCALE_BIN" up \
+              --auth-key="$TAILSCALE_AUTH_KEY" \
+              --hostname="github-macos-rdp"
+
+            UP_EXIT_CODE=$?
+
+            echo
+            echo "tailscale up exit code:"
+            echo "$UP_EXIT_CODE"
+
+            if [ "$UP_EXIT_CODE" -ne 0 ]; then
+              echo
+              echo "ERROR: tailscale up failed."
+
+              echo
+              echo "Status after failure:"
+              sudo "$TAILSCALE_BIN" status 2>&1 || true
+
+              exit "$UP_EXIT_CODE"
+            fi
+
           fi
 
-          echo
-          echo "Tailscale authentication successful."
-
       # =========================================================
-      # 10. VERIFY TAILSCALE
+      # 9. VERIFY TAILSCALE
       # =========================================================
       - name: Verify Tailscale
         shell: bash
@@ -388,28 +375,38 @@ jobs:
           echo "VERIFYING TAILSCALE"
           echo "=================================================="
 
-          echo "Status:"
-          sudo tailscale status
+          TAILSCALE_BIN="/usr/local/bin/tailscale"
 
           echo
-          echo "IP addresses:"
+          echo "Status:"
+          sudo "$TAILSCALE_BIN" status
+
+          echo
+          echo "Waiting for Tailscale IPv4..."
 
           TAILSCALE_IP=""
 
           for i in $(seq 1 30); do
 
-            TAILSCALE_IP=$(sudo tailscale ip -4 2>/dev/null | head -1)
+            TAILSCALE_IP=$(
+              sudo "$TAILSCALE_BIN" ip -4 2>/dev/null |
+              head -1
+            )
 
             if [ -n "$TAILSCALE_IP" ]; then
               break
             fi
 
-            echo "Waiting for Tailscale IP... $i/30"
+            echo "Waiting... $i/30"
             sleep 1
           done
 
           if [ -z "$TAILSCALE_IP" ]; then
-            echo "ERROR: No Tailscale IPv4 address found."
+            echo
+            echo "ERROR: No Tailscale IPv4 address."
+
+            sudo "$TAILSCALE_BIN" status || true
+
             exit 1
           fi
 
@@ -420,13 +417,11 @@ jobs:
           echo "=========================================="
 
           echo
-          echo "Ping self:"
-          sudo tailscale ping \
-            --c=1 \
-            "$TAILSCALE_IP" || true
+          echo "Tailscale netcheck:"
+          sudo "$TAILSCALE_BIN" netcheck || true
 
       # =========================================================
-      # 11. INSTALL RUST
+      # 10. INSTALL RUST
       # =========================================================
       - name: Install Rust
         shell: bash
@@ -453,7 +448,7 @@ jobs:
           cargo --version
 
       # =========================================================
-      # 12. CLONE MACRDP
+      # 11. CLONE MACRDP
       # =========================================================
       - name: Clone macrdp
         shell: bash
@@ -473,21 +468,13 @@ jobs:
 
           cd "$HOME/macrdp"
 
-          echo
-          echo "Repository:"
-          git remote -v
-
-          echo
-          echo "Commit:"
           git rev-parse HEAD
 
       # =========================================================
-      # 13. BUILD MACRDP
+      # 12. BUILD MACRDP
       # =========================================================
       - name: Build macrdp
         shell: bash
-        env:
-          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
           set -e
 
@@ -511,7 +498,7 @@ jobs:
             -print
 
       # =========================================================
-      # 14. INSTALL MACRDP
+      # 13. INSTALL MACRDP
       # =========================================================
       - name: Install macrdp
         shell: bash
@@ -522,19 +509,10 @@ jobs:
           echo "INSTALLING MACRDP"
           echo "=================================================="
 
-          MACRDP_BIN=""
+          MACRDP_BIN="$HOME/macrdp/target/release/macrdp"
 
-          if [ -x "$HOME/macrdp/target/release/macrdp" ]; then
-            MACRDP_BIN="$HOME/macrdp/target/release/macrdp"
-          else
-            echo "ERROR: macrdp binary was not found."
-
-            find "$HOME/macrdp/target/release" \
-              -maxdepth 1 \
-              -type f \
-              -perm -111 \
-              -print
-
+          if [ ! -x "$MACRDP_BIN" ]; then
+            echo "ERROR: macrdp binary not found."
             exit 1
           fi
 
@@ -542,16 +520,14 @@ jobs:
             "$MACRDP_BIN" \
             /usr/local/bin/macrdp
 
-          echo
-          echo "Installed:"
           ls -lah /usr/local/bin/macrdp
 
           echo
-          echo "Help:"
+          echo "macrdp help:"
           /usr/local/bin/macrdp --help || true
 
       # =========================================================
-      # 15. PREPARE MACRDP USER ENVIRONMENT
+      # 14. PREPARE MACRDP
       # =========================================================
       - name: Prepare macrdp
         shell: bash
@@ -575,10 +551,8 @@ jobs:
             "$USER_HOME/Library/Logs/macrdp" \
             "$USER_HOME/Library/LaunchAgents"
 
-          echo "Directories created."
-
       # =========================================================
-      # 16. CREATE MACRDP LAUNCH AGENT
+      # 15. CREATE MACRDP LAUNCHAGENT
       # =========================================================
       - name: Create macrdp LaunchAgent
         shell: bash
@@ -593,7 +567,6 @@ jobs:
           echo "=================================================="
 
           USER_HOME="/Users/$MACOS_USERNAME"
-
           PLIST_TMP="/tmp/com.macrdp.server.plist"
 
           cat > "$PLIST_TMP" <<EOF
@@ -609,26 +582,39 @@ jobs:
 
               <key>ProgramArguments</key>
               <array>
+
                   <string>/usr/local/bin/macrdp</string>
+
                   <string>--bind</string>
                   <string>0.0.0.0:3390</string>
+
                   <string>--username</string>
                   <string>$MACOS_USERNAME</string>
+
                   <string>--password</string>
                   <string>$MACOS_PASSWORD</string>
+
                   <string>--enable-h264</string>
+
                   <string>--fps</string>
                   <string>60</string>
+
                   <string>--bitrate</string>
                   <string>8</string>
+
                   <string>--keyframe-interval</string>
                   <string>2</string>
+
                   <string>--flush-frames</string>
                   <string>4</string>
+
                   <string>--virtual-display</string>
+
                   <string>--log-dir</string>
                   <string>$USER_HOME/Library/Logs/macrdp</string>
+
                   <string>--verbose</string>
+
               </array>
 
               <key>WorkingDirectory</key>
@@ -636,12 +622,16 @@ jobs:
 
               <key>EnvironmentVariables</key>
               <dict>
+
                   <key>PATH</key>
                   <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+
                   <key>HOME</key>
                   <string>$USER_HOME</string>
+
                   <key>USER</key>
                   <string>$MACOS_USERNAME</string>
+
               </dict>
 
               <key>RunAtLoad</key>
@@ -677,14 +667,11 @@ jobs:
           sudo chmod 644 \
             "$USER_HOME/Library/LaunchAgents/com.macrdp.server.plist"
 
-          echo
-          echo "LaunchAgent created."
-
           sudo plutil -lint \
             "$USER_HOME/Library/LaunchAgents/com.macrdp.server.plist"
 
       # =========================================================
-      # 17. START MACRDP
+      # 16. START MACRDP
       # =========================================================
       - name: Start macrdp
         shell: bash
@@ -698,17 +685,24 @@ jobs:
           echo "=================================================="
 
           USER_HOME="/Users/$MACOS_USERNAME"
+          USER_ID=$(id -u "$MACOS_USERNAME")
           PLIST="$USER_HOME/Library/LaunchAgents/com.macrdp.server.plist"
+
+          echo "User:"
+          echo "$MACOS_USERNAME"
+
+          echo "UID:"
+          echo "$USER_ID"
 
           echo
           echo "Bootstrapping LaunchAgent..."
 
           sudo launchctl bootout \
-            "gui/$(id -u "$MACOS_USERNAME")/com.macrdp.server" \
+            "gui/$USER_ID/com.macrdp.server" \
             2>/dev/null || true
 
           sudo launchctl bootstrap \
-            "gui/$(id -u "$MACOS_USERNAME")" \
+            "gui/$USER_ID" \
             "$PLIST"
 
           BOOTSTRAP_EXIT=$?
@@ -717,22 +711,13 @@ jobs:
           echo "Bootstrap exit code:"
           echo "$BOOTSTRAP_EXIT"
 
-          if [ "$BOOTSTRAP_EXIT" -ne 0 ]; then
-            echo
-            echo "Trying launchctl load..."
-
-            sudo -u "$MACOS_USERNAME" \
-              launchctl load "$PLIST" \
-              2>/dev/null || true
-          fi
-
           sleep 5
 
           echo
-          echo "Launchctl status:"
+          echo "LaunchAgent status:"
 
           sudo launchctl print \
-            "gui/$(id -u "$MACOS_USERNAME")/com.macrdp.server" \
+            "gui/$USER_ID/com.macrdp.server" \
             2>&1 || true
 
           echo
@@ -741,12 +726,12 @@ jobs:
           ps aux | grep macrdp | grep -v grep || true
 
           echo
-          echo "macrdp logs:"
+          echo "macrdp port:"
 
-          find "$USER_HOME/Library/Logs/macrdp" \
-            -type f \
-            -maxdepth 1 \
-            -print 2>/dev/null || true
+          sudo lsof \
+            -nP \
+            -iTCP:3390 \
+            -sTCP:LISTEN || true
 
           echo
           echo "stdout:"
@@ -759,9 +744,9 @@ jobs:
             2>/dev/null || true
 
       # =========================================================
-      # 18. VERIFY RDP PORT
+      # 17. VERIFY RDP
       # =========================================================
-      - name: Verify RDP Port
+      - name: Verify RDP
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
@@ -769,32 +754,41 @@ jobs:
           set +e
 
           echo "=================================================="
-          echo "VERIFYING RDP PORT"
+          echo "VERIFYING RDP"
           echo "=================================================="
 
-          echo "Listening sockets:"
-          sudo lsof -nP -iTCP:3390 -sTCP:LISTEN || true
+          USER_ID=$(id -u "$MACOS_USERNAME")
+          USER_HOME="/Users/$MACOS_USERNAME"
 
           echo
-          echo "All macrdp processes:"
+          echo "Port 3390:"
+          sudo lsof \
+            -nP \
+            -iTCP:3390 \
+            -sTCP:LISTEN || true
+
+          echo
+          echo "macrdp:"
           ps aux | grep macrdp | grep -v grep || true
 
           echo
           echo "LaunchAgent:"
           sudo launchctl print \
-            "gui/$(id -u "$MACOS_USERNAME")/com.macrdp.server" \
+            "gui/$USER_ID/com.macrdp.server" \
             2>&1 || true
 
           echo
-          echo "Logs:"
-          cat "/Users/$MACOS_USERNAME/Library/Logs/macrdp/stdout.log" \
+          echo "stdout:"
+          cat "$USER_HOME/Library/Logs/macrdp/stdout.log" \
             2>/dev/null || true
 
-          cat "/Users/$MACOS_USERNAME/Library/Logs/macrdp/stderr.log" \
+          echo
+          echo "stderr:"
+          cat "$USER_HOME/Library/Logs/macrdp/stderr.log" \
             2>/dev/null || true
 
       # =========================================================
-      # 19. CONNECTION INFORMATION
+      # 18. CONNECTION INFORMATION
       # =========================================================
       - name: Connection Information
         shell: bash
@@ -808,7 +802,10 @@ jobs:
           echo "REMOTE DESKTOP CONNECTION INFORMATION"
           echo "=================================================="
 
-          TAILSCALE_IP=$(sudo tailscale ip -4 2>/dev/null | head -1)
+          TAILSCALE_IP=$(
+            sudo /usr/local/bin/tailscale ip -4 2>/dev/null |
+            head -1
+          )
 
           echo
           echo "Tailscale IP:"
@@ -823,8 +820,12 @@ jobs:
           echo "$MACOS_USERNAME"
 
           echo
+          echo "Password:"
+          echo "(MACOS_PASSWORD secret)"
+
+          echo
           echo "=================================================="
-          echo "USE MICROSOFT REMOTE DESKTOP"
+          echo "MICROSOFT REMOTE DESKTOP"
           echo "=================================================="
 
           echo
@@ -836,18 +837,14 @@ jobs:
           echo "$MACOS_USERNAME"
 
           echo
-          echo "Password:"
-          echo "(the value stored in MACOS_PASSWORD secret)"
-
-          echo
           echo "=================================================="
 
           echo
           echo "Tailscale status:"
-          sudo tailscale status || true
+          sudo /usr/local/bin/tailscale status || true
 
       # =========================================================
-      # 20. KEEP RUNNER ALIVE
+      # 19. KEEP RUNNER ALIVE
       # =========================================================
       - name: Keep Runner Alive
         shell: bash
@@ -858,7 +855,7 @@ jobs:
           echo "KEEPING RUNNER ALIVE"
           echo "=================================================="
 
-          echo "The runner will remain alive for approximately 5h 40m."
+          echo "Runner will remain alive for approximately 5h 40m."
 
           END=$((SECONDS + 20400))
 
@@ -874,15 +871,18 @@ jobs:
 
             echo
             echo "Tailscale:"
-            sudo tailscale status 2>&1 || true
+            sudo /usr/local/bin/tailscale status 2>&1 || true
 
             echo
             echo "Tailscale IP:"
-            sudo tailscale ip -4 2>&1 || true
+            sudo /usr/local/bin/tailscale ip -4 2>&1 || true
 
             echo
             echo "RDP port:"
-            sudo lsof -nP -iTCP:3390 -sTCP:LISTEN 2>&1 || true
+            sudo lsof \
+              -nP \
+              -iTCP:3390 \
+              -sTCP:LISTEN 2>&1 || true
 
             echo
             echo "macrdp:"
@@ -893,13 +893,14 @@ jobs:
             ps aux | grep tailscaled | grep -v grep || true
 
             sleep 60
+
           done
 
           echo
           echo "5h40m elapsed."
 
       # =========================================================
-      # 21. CLEANUP
+      # 20. CLEANUP
       # =========================================================
       - name: Cleanup
         if: always()
@@ -927,9 +928,7 @@ jobs:
 
           fi
 
-          sudo tailscale down 2>/dev/null || true
-
-          sudo tailscaled uninstall-system-daemon \
+          sudo /usr/local/bin/tailscale down \
             2>/dev/null || true
 
           echo "Cleanup complete."
