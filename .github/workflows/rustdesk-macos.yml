@@ -1,4 +1,4 @@
-name: macOS Tailscale RDP - Abdulrahman
+name: macOS RDP - Abdulrahman
 
 on:
   workflow_dispatch:
@@ -15,29 +15,33 @@ jobs:
     steps:
 
       # =========================================================
-      # 1. SYSTEM INFORMATION
+      # 1. System Information
       # =========================================================
       - name: System Information
         shell: bash
         run: |
-          set +e
-
-          echo "=================================================="
-          echo "SYSTEM INFORMATION"
-          echo "=================================================="
-
+          echo "===== SYSTEM ====="
           sw_vers
           echo
-          uname -a
-          echo
+          echo "===== CURRENT USER ====="
           whoami
           echo
-          id
+          echo "===== CONSOLE USER ====="
+          stat -f "%Su" /dev/console
           echo
-          uname -m
+          echo "===== GUI SESSIONS ====="
+          who
+          echo
+          echo "===== MEMORY ====="
+          sysctl hw.memsize
+          echo
+          echo "===== DISK ====="
+          df -h
+          echo
+          echo "======================"
 
       # =========================================================
-      # 2. CREATE MACOS USER
+      # 2. Create / Verify Abdulrahman User
       # =========================================================
       - name: Create macOS User
         shell: bash
@@ -47,62 +51,35 @@ jobs:
         run: |
           set -e
 
-          echo "=================================================="
-          echo "CREATING MACOS USER"
-          echo "=================================================="
+          echo "Checking user: $MACOS_USERNAME"
 
           if id "$MACOS_USERNAME" >/dev/null 2>&1; then
-
             echo "User already exists."
-
           else
+            echo "Creating user..."
 
-            NEXT_UID=$(
-              dscl . -list /Users UniqueID |
-              awk '{print $2}' |
-              sort -n |
-              tail -1
-            )
-
-            NEXT_UID=$((NEXT_UID + 1))
-
-            sudo dscl . -create "/Users/$MACOS_USERNAME"
-            sudo dscl . -create "/Users/$MACOS_USERNAME" UserShell /bin/zsh
-            sudo dscl . -create "/Users/$MACOS_USERNAME" RealName "$MACOS_USERNAME"
-            sudo dscl . -create "/Users/$MACOS_USERNAME" UniqueID "$NEXT_UID"
-            sudo dscl . -create "/Users/$MACOS_USERNAME" PrimaryGroupID 20
-            sudo dscl . -create "/Users/$MACOS_USERNAME" NFSHomeDirectory "/Users/$MACOS_USERNAME"
-
-            sudo mkdir -p "/Users/$MACOS_USERNAME"
-
-            sudo chown -R \
-              "$MACOS_USERNAME:staff" \
-              "/Users/$MACOS_USERNAME"
-
-            sudo dscl . -passwd \
-              "/Users/$MACOS_USERNAME" \
-              "$MACOS_PASSWORD"
+            sudo sysadminctl \
+              -addUser "$MACOS_USERNAME" \
+              -fullName "$MACOS_USERNAME" \
+              -password "$MACOS_PASSWORD"
 
             echo "User created."
-
           fi
 
-          echo
+          echo "User ID:"
           id "$MACOS_USERNAME"
 
       # =========================================================
-      # 3. MAKE USER ADMIN
+      # 3. Make User Administrator
       # =========================================================
-      - name: Make User Administrator
+      - name: Configure Administrator
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
           set -e
 
-          echo "=================================================="
-          echo "ADDING USER TO ADMIN GROUP"
-          echo "=================================================="
+          echo "Adding $MACOS_USERNAME to admin group..."
 
           sudo dseditgroup \
             -o edit \
@@ -110,519 +87,192 @@ jobs:
             -t user \
             admin
 
-          sudo dseditgroup \
-            -o checkmember \
-            -m "$MACOS_USERNAME" \
-            admin || true
+          echo
+          echo "===== USER GROUPS ====="
+          id "$MACOS_USERNAME"
+
+          echo
+          echo "===== ADMIN GROUP ====="
+          dscl . -read /Groups/admin GroupMembership
 
       # =========================================================
-      # 4. CONFIGURE AUTO LOGIN
+      # 4. Configure Auto Login
       # =========================================================
       - name: Configure Auto Login
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
         run: |
           set +e
 
-          echo "=================================================="
-          echo "CONFIGURING AUTO LOGIN"
-          echo "=================================================="
+          echo "Configuring automatic login..."
 
-          sudo defaults write \
-            /Library/Preferences/com.apple.loginwindow \
-            autoLoginUser \
-            "$MACOS_USERNAME"
-
-          sudo defaults write \
-            /Library/Preferences/com.apple.loginwindow \
-            DisableFDEAutoLogin \
-            -bool false
+          sudo defaults write /Library/Preferences/com.apple.loginwindow \
+            autoLoginUser "$MACOS_USERNAME"
 
           echo
-          echo "Auto-login user:"
+          echo "Auto login configuration:"
+          sudo defaults read /Library/Preferences/com.apple.loginwindow \
+            autoLoginUser 2>/dev/null || true
 
-          sudo defaults read \
-            /Library/Preferences/com.apple.loginwindow \
-            autoLoginUser || true
+          echo
+          echo "NOTE:"
+          echo "Auto-login affects a future GUI login."
+          echo "The current GitHub runner console session may still be 'runner'."
 
       # =========================================================
-      # 5. INSTALL TAILSCALE STANDALONE
+      # 5. Install Homebrew / Tailscale
       # =========================================================
-      - name: Install Tailscale Standalone
+      - name: Install Tailscale
         shell: bash
         run: |
           set -e
 
-          echo "=================================================="
-          echo "INSTALLING TAILSCALE STANDALONE"
-          echo "=================================================="
+          if command -v brew >/dev/null 2>&1; then
+            echo "Homebrew already installed."
+          else
+            echo "Installing Homebrew..."
 
-          PKG="/tmp/Tailscale-latest-macos.pkg"
+            NONINTERACTIVE=1 /bin/bash -c \
+              "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          fi
 
-          echo
-          echo "Downloading Tailscale..."
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-          curl -fL \
-            "https://pkgs.tailscale.com/stable/Tailscale-latest-macos.pkg" \
-            -o "$PKG"
+          echo "PATH=$PATH"
 
           echo
           echo "Installing Tailscale..."
 
-          sudo installer \
-            -pkg "$PKG" \
-            -target /
+          brew install --quiet tailscale || true
 
           echo
-          echo "Installation completed."
-
-          echo
-          echo "Tailscale application:"
-
-          ls -lah \
-            "/Applications/Tailscale.app/Contents/MacOS/Tailscale" \
-            2>/dev/null || true
-
-          echo
-          echo "CLI symlink:"
-
-          ls -lah \
-            /usr/local/bin/tailscale \
-            2>/dev/null || true
+          echo "Tailscale version:"
+          tailscale version
 
       # =========================================================
-      # 6. START TAILSCALE APP
+      # 6. Start Tailscale
       # =========================================================
-      - name: Start Tailscale App
-        shell: bash
-        run: |
-          set +e
-
-          echo "=================================================="
-          echo "STARTING TAILSCALE"
-          echo "=================================================="
-
-          TAILSCALE_APP="/Applications/Tailscale.app"
-          TAILSCALE_BIN="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-
-          if [ ! -x "$TAILSCALE_BIN" ]; then
-            echo "ERROR: Tailscale executable not found."
-
-            ls -lah \
-              "/Applications/Tailscale.app/Contents/MacOS/" \
-              2>/dev/null || true
-
-            exit 1
-          fi
-
-          echo "CLI:"
-          echo "$TAILSCALE_BIN"
-
-          echo
-          echo "Existing Tailscale processes:"
-
-          ps aux |
-            grep -i tailscale |
-            grep -v grep || true
-
-          echo
-          echo "Launching Tailscale.app..."
-
-          open -a "$TAILSCALE_APP"
-
-          sleep 8
-
-          echo
-          echo "Tailscale processes after launch:"
-
-          ps aux |
-            grep -i tailscale |
-            grep -v grep || true
-
-      # =========================================================
-      # 7. LOCATE TAILSCALE CLI
-      # =========================================================
-      - name: Locate Tailscale CLI
-        shell: bash
-        run: |
-          set -e
-
-          echo "=================================================="
-          echo "LOCATING TAILSCALE CLI"
-          echo "=================================================="
-
-          if [ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]; then
-
-            echo "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-
-          elif [ -x "/usr/local/bin/tailscale" ]; then
-
-            echo "/usr/local/bin/tailscale"
-
-          else
-
-            echo "ERROR: Tailscale CLI not found."
-
-            exit 1
-
-          fi
-
-      # =========================================================
-      # 8. CHECK EXISTING TAILSCALE STATE
-      # =========================================================
-      - name: Check Tailscale State
-        shell: bash
-        run: |
-          set +e
-
-          echo "=================================================="
-          echo "CHECKING TAILSCALE STATE"
-          echo "=================================================="
-
-          TAILSCALE_BIN="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-
-          echo "CLI:"
-          echo "$TAILSCALE_BIN"
-
-          echo
-          echo "Running:"
-          ps aux |
-            grep -i tailscale |
-            grep -v grep || true
-
-          echo
-          echo "Checking status..."
-
-          "$TAILSCALE_BIN" status \
-            >/tmp/tailscale-status.txt \
-            2>/tmp/tailscale-status.err &
-
-          STATUS_PID=$!
-
-          for i in $(seq 1 30); do
-
-            if ! kill -0 "$STATUS_PID" 2>/dev/null; then
-              break
-            fi
-
-            echo "Waiting for status... $i/30"
-
-            sleep 1
-
-          done
-
-          if kill -0 "$STATUS_PID" 2>/dev/null; then
-
-            echo
-            echo "Status command is still running."
-
-            kill "$STATUS_PID" 2>/dev/null || true
-
-          fi
-
-          echo
-          echo "TAILSCALE STATUS:"
-          cat /tmp/tailscale-status.txt \
-            2>/dev/null || true
-
-          echo
-          echo "TAILSCALE STATUS STDERR:"
-          cat /tmp/tailscale-status.err \
-            2>/dev/null || true
-
-      # =========================================================
-      # 9. AUTHENTICATE TAILSCALE ONLY IF NEEDED
-      # =========================================================
-      - name: Authenticate Tailscale
+      - name: Start Tailscale
         shell: bash
         env:
           TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
         run: |
           set +e
 
-          echo "=================================================="
-          echo "TAILSCALE AUTHENTICATION"
-          echo "=================================================="
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-          TAILSCALE_BIN="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+          echo "===== TAILSCALE ====="
 
-          if [ -z "$TAILSCALE_AUTH_KEY" ]; then
-            echo "ERROR: TAILSCALE_AUTH_KEY is empty."
-            exit 1
-          fi
-
-          echo
-          echo "Checking current Tailscale state..."
-
-          STATUS=$(
-            "$TAILSCALE_BIN" status 2>&1
-          )
-
-          STATUS_EXIT=$?
-
-          echo
-          echo "Status exit code:"
-          echo "$STATUS_EXIT"
-
-          echo
-          echo "Status:"
-          echo "$STATUS"
-
-          # -----------------------------------------------------
-          # If already connected, DO NOT run tailscale up.
-          # -----------------------------------------------------
-
-          if echo "$STATUS" |
-            grep -Eqi \
-            "Logged out|NeedsLogin|not logged in"; then
-
-            echo
-            echo "Tailscale is not authenticated."
-            echo "Starting authentication..."
-
-            rm -f \
-              /tmp/tailscale-up.stdout \
-              /tmp/tailscale-up.stderr
-
-            (
-              "$TAILSCALE_BIN" up \
-                --auth-key="$TAILSCALE_AUTH_KEY" \
-                --hostname="github-macos-rdp"
-            ) \
-              >/tmp/tailscale-up.stdout \
-              2>/tmp/tailscale-up.stderr &
-
-            UP_PID=$!
-
-            echo
-            echo "tailscale up PID:"
-            echo "$UP_PID"
-
-            SUCCESS=0
-
-            for i in $(seq 1 120); do
-
-              if ! kill -0 "$UP_PID" 2>/dev/null; then
-
-                wait "$UP_PID"
-
-                UP_EXIT=$?
-
-                echo
-                echo "tailscale up exited:"
-                echo "$UP_EXIT"
-
-                if [ "$UP_EXIT" -eq 0 ]; then
-                  SUCCESS=1
-                fi
-
-                break
-              fi
-
-              # Check if authentication has completed even while
-              # the process is still alive.
-
-              CURRENT_IP=$(
-                "$TAILSCALE_BIN" ip -4 2>/dev/null |
-                head -1
-              )
-
-              if [ -n "$CURRENT_IP" ]; then
-
-                echo
-                echo "Tailscale IP detected:"
-                echo "$CURRENT_IP"
-
-                SUCCESS=1
-
-                kill "$UP_PID" 2>/dev/null || true
-
-                break
-              fi
-
-              echo "Waiting for authentication... $i/120"
-
-              sleep 1
-
-            done
-
-            if [ "$SUCCESS" -ne 1 ]; then
-
-              echo
-              echo "ERROR: Tailscale authentication did not complete."
-
-              echo
-              echo "STDOUT:"
-              cat /tmp/tailscale-up.stdout \
-                2>/dev/null || true
-
-              echo
-              echo "STDERR:"
-              cat /tmp/tailscale-up.stderr \
-                2>/dev/null || true
-
-              echo
-              echo "Processes:"
-              ps aux |
-                grep -i tailscale |
-                grep -v grep || true
-
-              exit 1
-            fi
-
+          if pgrep -x tailscaled >/dev/null 2>&1; then
+            echo "tailscaled is already running."
           else
+            echo "Starting tailscaled..."
 
-            echo
-            echo "Tailscale already appears to be authenticated."
-            echo "Skipping tailscale up."
+            sudo tailscaled \
+              --state=/tmp/tailscale-state \
+              > /tmp/tailscaled.log 2>&1 &
 
-          fi
+            TAILSCALED_PID=$!
 
-      # =========================================================
-      # 10. VERIFY TAILSCALE
-      # =========================================================
-      - name: Verify Tailscale
-        shell: bash
-        run: |
-          set +e
+            echo "tailscaled PID: $TAILSCALED_PID"
 
-          echo "=================================================="
-          echo "VERIFYING TAILSCALE"
-          echo "=================================================="
-
-          TAILSCALE_BIN="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-
-          echo
-          echo "Status:"
-
-          "$TAILSCALE_BIN" status \
-            2>&1 || true
-
-          echo
-          echo "Waiting for IPv4..."
-
-          TAILSCALE_IP=""
-
-          for i in $(seq 1 30); do
-
-            TAILSCALE_IP=$(
-              "$TAILSCALE_BIN" ip -4 2>/dev/null |
-              head -1
-            )
-
-            if [ -n "$TAILSCALE_IP" ]; then
-              break
-            fi
-
-            echo "Waiting... $i/30"
-
-            sleep 1
-
-          done
-
-          if [ -z "$TAILSCALE_IP" ]; then
-
-            echo
-            echo "ERROR: Tailscale IPv4 was not found."
-
-            echo
-            echo "Status:"
-            "$TAILSCALE_BIN" status \
-              2>&1 || true
-
-            exit 1
+            sleep 5
           fi
 
           echo
-          echo "=========================================="
-          echo "TAILSCALE IPv4:"
-          echo "$TAILSCALE_IP"
-          echo "=========================================="
+          echo "tailscaled processes:"
+          pgrep -fl tailscaled || true
 
           echo
-          echo "Tailscale IPs:"
+          echo "tailscaled log:"
+          cat /tmp/tailscaled.log 2>/dev/null || true
 
-          "$TAILSCALE_BIN" ip \
-            2>&1 || true
+          echo
+          echo "Connecting to Tailscale..."
+
+          sudo tailscale up \
+            --authkey="$TAILSCALE_AUTH_KEY" \
+            --hostname="github-macos-rdp"
+
+          echo
+          echo "===== TAILSCALE STATUS ====="
+
+          sudo tailscale status
+
+          echo
+          echo "===== TAILSCALE IP ====="
+
+          TAILSCALE_IP=$(tailscale ip -4 2>/dev/null | head -n 1)
+
+          echo "TAILSCALE_IP=$TAILSCALE_IP"
+
+          echo "$TAILSCALE_IP" > /tmp/tailscale_ip
 
       # =========================================================
-      # 11. INSTALL RUST
+      # 7. Install Rust
       # =========================================================
       - name: Install Rust
         shell: bash
         run: |
           set -e
 
-          echo "=================================================="
-          echo "INSTALLING RUST"
-          echo "=================================================="
-
           if command -v rustc >/dev/null 2>&1; then
-
             echo "Rust already installed."
-
           else
+            echo "Installing Rust..."
 
-            curl \
-              --proto '=https' \
+            curl --proto '=https' \
               --tlsv1.2 \
-              -sSf \
-              https://sh.rustup.rs |
-              sh -s -- -y
-
+              -sSf https://sh.rustup.rs \
+              | sh -s -- -y
           fi
 
           source "$HOME/.cargo/env"
 
+          echo
           rustc --version
           cargo --version
 
       # =========================================================
-      # 12. CLONE MACRDP
+      # 8. Clone macrdp
       # =========================================================
       - name: Clone macrdp
         shell: bash
         run: |
           set -e
 
-          echo "=================================================="
-          echo "CLONING MACRDP"
-          echo "=================================================="
-
           rm -rf "$HOME/macrdp"
 
           git clone \
-            --depth 1 \
             https://github.com/clintcan/macrdp.git \
             "$HOME/macrdp"
 
           cd "$HOME/macrdp"
 
           echo
-          echo "Commit:"
-          git rev-parse HEAD
+          echo "===== MACRDP FILES ====="
+          ls -la
 
       # =========================================================
-      # 13. BUILD MACRDP
+      # 9. Build macrdp
       # =========================================================
       - name: Build macrdp
         shell: bash
         run: |
           set -e
 
-          echo "=================================================="
-          echo "BUILDING MACRDP"
-          echo "=================================================="
-
           source "$HOME/.cargo/env"
 
           cd "$HOME/macrdp"
 
+          echo "===== CARGO BUILD ====="
+
           cargo build --release
 
           echo
-          echo "Build completed."
+          echo "===== BUILD OUTPUT ====="
 
           find target/release \
             -maxdepth 1 \
@@ -631,323 +281,236 @@ jobs:
             -print
 
       # =========================================================
-      # 14. INSTALL MACRDP
+      # 10. Install macrdp
       # =========================================================
       - name: Install macrdp
         shell: bash
         run: |
           set -e
 
-          echo "=================================================="
-          echo "INSTALLING MACRDP"
-          echo "=================================================="
+          MACRDP_BINARY="$HOME/macrdp/target/release/macrdp"
 
-          MACRDP_BIN="$HOME/macrdp/target/release/macrdp"
-
-          if [ ! -x "$MACRDP_BIN" ]; then
-
+          if [ ! -f "$MACRDP_BINARY" ]; then
             echo "ERROR: macrdp binary not found."
-
             exit 1
-
           fi
 
-          sudo install \
-            -m 755 \
-            "$MACRDP_BIN" \
-            /usr/local/bin/macrdp
+          sudo cp "$MACRDP_BINARY" /usr/local/bin/macrdp
+
+          sudo chmod +x /usr/local/bin/macrdp
 
           echo
-          echo "Installed:"
-          ls -lah /usr/local/bin/macrdp
+          echo "===== MACRDP VERSION / HELP ====="
 
-          echo
-          echo "macrdp help:"
-
-          /usr/local/bin/macrdp --help \
-            2>&1 || true
+          /usr/local/bin/macrdp --help
 
       # =========================================================
-      # 15. PREPARE MACRDP
+      # 11. Open macOS Permissions
       # =========================================================
-      - name: Prepare macrdp
+      - name: Open macOS Permissions
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
-          set -e
+          set +e
 
-          echo "=================================================="
-          echo "PREPARING MACRDP"
-          echo "=================================================="
+          echo "Opening Screen Recording settings..."
 
-          USER_HOME="/Users/$MACOS_USERNAME"
+          sudo -u "$MACOS_USERNAME" \
+            open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
 
-          sudo mkdir -p \
-            "$USER_HOME/Library/Logs/macrdp" \
-            "$USER_HOME/Library/LaunchAgents"
+          sleep 3
 
-          sudo chown -R \
-            "$MACOS_USERNAME:staff" \
-            "$USER_HOME/Library/Logs/macrdp" \
-            "$USER_HOME/Library/LaunchAgents"
+          echo
+          echo "Opening Accessibility settings..."
+
+          sudo -u "$MACOS_USERNAME" \
+            open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+
+          sleep 3
+
+          echo
+          echo "Current console user:"
+          stat -f "%Su" /dev/console
 
       # =========================================================
-      # 16. CREATE MACRDP LAUNCHAGENT
+      # 12. Start macOS RDP Server
       # =========================================================
-      - name: Create macrdp LaunchAgent
+      - name: Start macOS RDP Server
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
           MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
         run: |
-          set -e
+          set +e
 
-          echo "=================================================="
-          echo "CREATING MACRDP LAUNCHAGENT"
-          echo "=================================================="
+          RDP="/usr/local/bin/macrdp"
 
-          USER_HOME="/Users/$MACOS_USERNAME"
-
-          PLIST_TMP="/tmp/com.macrdp.server.plist"
-
-          cat > "$PLIST_TMP" <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-          "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-
-          <plist version="1.0">
-          <dict>
-
-              <key>Label</key>
-              <string>com.macrdp.server</string>
-
-              <key>ProgramArguments</key>
-              <array>
-
-                  <string>/usr/local/bin/macrdp</string>
-
-                  <string>--bind</string>
-                  <string>0.0.0.0:3390</string>
-
-                  <string>--username</string>
-                  <string>$MACOS_USERNAME</string>
-
-                  <string>--password</string>
-                  <string>$MACOS_PASSWORD</string>
-
-                  <string>--enable-h264</string>
-
-                  <string>--fps</string>
-                  <string>60</string>
-
-                  <string>--bitrate</string>
-                  <string>8</string>
-
-                  <string>--keyframe-interval</string>
-                  <string>2</string>
-
-                  <string>--flush-frames</string>
-                  <string>4</string>
-
-                  <string>--virtual-display</string>
-
-                  <string>--log-dir</string>
-                  <string>$USER_HOME/Library/Logs/macrdp</string>
-
-                  <string>--verbose</string>
-
-              </array>
-
-              <key>WorkingDirectory</key>
-              <string>$USER_HOME</string>
-
-              <key>EnvironmentVariables</key>
-              <dict>
-
-                  <key>PATH</key>
-                  <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-
-                  <key>HOME</key>
-                  <string>$USER_HOME</string>
-
-                  <key>USER</key>
-                  <string>$MACOS_USERNAME</string>
-
-              </dict>
-
-              <key>RunAtLoad</key>
-              <true/>
-
-              <key>KeepAlive</key>
-              <true/>
-
-              <key>ProcessType</key>
-              <string>Interactive</string>
-
-              <key>ThrottleInterval</key>
-              <integer>5</integer>
-
-              <key>StandardOutPath</key>
-              <string>$USER_HOME/Library/Logs/macrdp/stdout.log</string>
-
-              <key>StandardErrorPath</key>
-              <string>$USER_HOME/Library/Logs/macrdp/stderr.log</string>
-
-          </dict>
-          </plist>
-          EOF
-
-          sudo cp \
-            "$PLIST_TMP" \
-            "$USER_HOME/Library/LaunchAgents/com.macrdp.server.plist"
-
-          sudo chown \
-            "$MACOS_USERNAME:staff" \
-            "$USER_HOME/Library/LaunchAgents/com.macrdp.server.plist"
-
-          sudo chmod 644 \
-            "$USER_HOME/Library/LaunchAgents/com.macrdp.server.plist"
+          echo "===== MACRDP START ====="
 
           echo
-          echo "Checking plist:"
+          echo "macrdp path:"
+          ls -l "$RDP"
 
-          sudo plutil -lint \
-            "$USER_HOME/Library/LaunchAgents/com.macrdp.server.plist"
+          echo
+          echo "macrdp version/help:"
+          "$RDP" --help | head -n 80
+
+          echo
+          echo "===== CURRENT USER ====="
+          whoami
+
+          echo
+          echo "===== CONSOLE USER ====="
+          stat -f "%Su" /dev/console
+
+          echo
+          echo "===== GUI SESSIONS ====="
+          who
+
+          echo
+          echo "===== STARTING MACRDP ====="
+
+          rm -f /tmp/macrdp.log
+
+          rm -rf /tmp/macrdp-logs
+          mkdir -p /tmp/macrdp-logs
+
+          #
+          # IMPORTANT:
+          # Do NOT use:
+          #   nohup
+          #   sudo -u
+          #
+          # The previous version failed with:
+          #   nohup: can't detach from console:
+          #   Inappropriate ioctl for device
+          #
+          "$RDP" \
+            --bind 0.0.0.0:3390 \
+            --username "$MACOS_USERNAME" \
+            --password "$MACOS_PASSWORD" \
+            --enable-h264 \
+            --fps 60 \
+            --bitrate 8 \
+            --keyframe-interval 2 \
+            --flush-frames 4 \
+            --log-dir "/tmp/macrdp-logs" \
+            --verbose \
+            > /tmp/macrdp.log 2>&1 &
+
+          MACRDP_PID=$!
+
+          echo "macrdp PID: $MACRDP_PID"
+
+          echo
+          echo "Waiting for macrdp..."
+          sleep 10
+
+          echo
+          echo "===== MACRDP PROCESS ====="
+
+          ps -p "$MACRDP_PID" \
+            -o pid,ppid,user,%cpu,%mem,stat,command \
+            2>/dev/null || true
+
+          echo
+          echo "===== ALL MACRDP PROCESSES ====="
+
+          pgrep -fl macrdp || true
+
+          echo
+          echo "===== MACRDP LOG ====="
+
+          cat /tmp/macrdp.log 2>/dev/null || true
+
+          echo
+          echo "===== MACRDP LOG DIRECTORY ====="
+
+          find /tmp/macrdp-logs \
+            -maxdepth 2 \
+            -type f \
+            -print \
+            2>/dev/null || true
+
+          echo
+          echo "===== PORT 3390 ====="
+
+          lsof -nP \
+            -iTCP:3390 \
+            -sTCP:LISTEN \
+            2>/dev/null || true
+
+          echo
+          echo "===== NETSTAT ====="
+
+          netstat -an \
+            2>/dev/null \
+            | grep 3390 \
+            || true
+
+          echo
+          echo "===== END MACRDP START ====="
 
       # =========================================================
-      # 17. START MACRDP
+      # 13. Verify RDP Server
       # =========================================================
-      - name: Start macrdp
+      - name: Verify RDP Server
         shell: bash
-        env:
-          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
           set +e
 
-          echo "=================================================="
-          echo "STARTING MACRDP"
-          echo "=================================================="
-
-          USER_HOME="/Users/$MACOS_USERNAME"
-          USER_ID=$(id -u "$MACOS_USERNAME")
-
-          PLIST="$USER_HOME/Library/LaunchAgents/com.macrdp.server.plist"
+          echo "===== VERIFY MACRDP ====="
 
           echo
-          echo "User:"
-          echo "$MACOS_USERNAME"
+          echo "Processes:"
+          pgrep -fl macrdp || true
 
           echo
-          echo "UID:"
-          echo "$USER_ID"
-
-          echo
-          echo "Bootstrapping..."
-
-          sudo launchctl bootout \
-            "gui/$USER_ID/com.macrdp.server" \
-            2>/dev/null || true
-
-          sudo launchctl bootstrap \
-            "gui/$USER_ID" \
-            "$PLIST"
-
-          BOOTSTRAP_EXIT=$?
-
-          echo
-          echo "Bootstrap exit code:"
-          echo "$BOOTSTRAP_EXIT"
-
-          sleep 5
-
-          echo
-          echo "LaunchAgent status:"
-
-          sudo launchctl print \
-            "gui/$USER_ID/com.macrdp.server" \
-            2>&1 || true
-
-          echo
-          echo "macrdp process:"
-
-          ps aux |
-            grep macrdp |
-            grep -v grep || true
-
-          echo
-          echo "Port 3390:"
-
-          sudo lsof \
-            -nP \
+          echo "Listening port:"
+          lsof -nP \
             -iTCP:3390 \
-            -sTCP:LISTEN || true
-
-          echo
-          echo "stdout:"
-
-          cat "$USER_HOME/Library/Logs/macrdp/stdout.log" \
+            -sTCP:LISTEN \
             2>/dev/null || true
 
           echo
-          echo "stderr:"
+          echo "Testing localhost:3390..."
 
-          cat "$USER_HOME/Library/Logs/macrdp/stderr.log" \
-            2>/dev/null || true
+          nc -zv 127.0.0.1 3390
+
+          RESULT=$?
+
+          echo
+          echo "nc result: $RESULT"
+
+          if [ "$RESULT" -eq 0 ]; then
+            echo
+            echo "======================================"
+            echo "RDP SERVER IS LISTENING ON PORT 3390"
+            echo "======================================"
+          else
+            echo
+            echo "======================================"
+            echo "RDP SERVER IS NOT LISTENING"
+            echo "======================================"
+          fi
+
+          echo
+          echo "===== MACRDP LOG ====="
+
+          cat /tmp/macrdp.log 2>/dev/null || true
+
+          echo
+          echo "===== END VERIFY ====="
+
+          #
+          # Don't fail the whole workflow here.
+          # We want the logs even if macrdp failed.
+          #
+          exit 0
 
       # =========================================================
-      # 18. VERIFY RDP
-      # =========================================================
-      - name: Verify RDP
-        shell: bash
-        env:
-          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-        run: |
-          set +e
-
-          echo "=================================================="
-          echo "VERIFYING RDP"
-          echo "=================================================="
-
-          USER_ID=$(id -u "$MACOS_USERNAME")
-          USER_HOME="/Users/$MACOS_USERNAME"
-
-          echo
-          echo "RDP port:"
-
-          sudo lsof \
-            -nP \
-            -iTCP:3390 \
-            -sTCP:LISTEN || true
-
-          echo
-          echo "macrdp processes:"
-
-          ps aux |
-            grep macrdp |
-            grep -v grep || true
-
-          echo
-          echo "LaunchAgent:"
-
-          sudo launchctl print \
-            "gui/$USER_ID/com.macrdp.server" \
-            2>&1 || true
-
-          echo
-          echo "stdout:"
-
-          cat "$USER_HOME/Library/Logs/macrdp/stdout.log" \
-            2>/dev/null || true
-
-          echo
-          echo "stderr:"
-
-          cat "$USER_HOME/Library/Logs/macrdp/stderr.log" \
-            2>/dev/null || true
-
-      # =========================================================
-      # 19. CONNECTION INFORMATION
+      # 14. Connection Information
       # =========================================================
       - name: Connection Information
         shell: bash
@@ -957,23 +520,23 @@ jobs:
           set +e
 
           echo
-          echo "=================================================="
-          echo "REMOTE DESKTOP CONNECTION"
-          echo "=================================================="
-
-          TAILSCALE_BIN="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-
-          TAILSCALE_IP=$(
-            "$TAILSCALE_BIN" ip -4 2>/dev/null |
-            head -1
-          )
+          echo "======================================================"
+          echo "                 RDP CONNECTION INFO"
+          echo "======================================================"
 
           echo
-          echo "Tailscale IP:"
+          echo "Tailscale IPv4:"
+
+          TAILSCALE_IP=$(cat /tmp/tailscale_ip 2>/dev/null)
+
+          if [ -z "$TAILSCALE_IP" ]; then
+            TAILSCALE_IP=$(tailscale ip -4 2>/dev/null | head -n 1)
+          fi
+
           echo "$TAILSCALE_IP"
 
           echo
-          echo "RDP:"
+          echo "RDP Address:"
           echo "$TAILSCALE_IP:3390"
 
           echo
@@ -982,12 +545,12 @@ jobs:
 
           echo
           echo "Password:"
-          echo "(MACOS_PASSWORD secret)"
+          echo "Use the value stored in GitHub Secret MACOS_PASSWORD"
 
           echo
-          echo "=================================================="
-          echo "MICROSOFT REMOTE DESKTOP"
-          echo "=================================================="
+          echo "======================================================"
+          echo " Microsoft Remote Desktop"
+          echo "======================================================"
 
           echo
           echo "PC:"
@@ -998,116 +561,99 @@ jobs:
           echo "$MACOS_USERNAME"
 
           echo
-          echo "Tailscale status:"
-
-          "$TAILSCALE_BIN" status \
-            2>&1 || true
+          echo "======================================================"
 
       # =========================================================
-      # 20. KEEP RUNNER ALIVE
+      # 15. Final Diagnostic Check
+      # =========================================================
+      - name: Final Diagnostic Check
+        shell: bash
+        run: |
+          set +e
+
+          echo "===== FINAL CHECK ====="
+
+          echo
+          echo "Current console user:"
+          stat -f "%Su" /dev/console
+
+          echo
+          echo "Logged-in users:"
+          who
+
+          echo
+          echo "macrdp:"
+          pgrep -fl macrdp || true
+
+          echo
+          echo "Port 3390:"
+          lsof -nP \
+            -iTCP:3390 \
+            -sTCP:LISTEN \
+            2>/dev/null || true
+
+          echo
+          echo "Tailscale:"
+          tailscale status 2>/dev/null || true
+
+          echo
+          echo "Tailscale IP:"
+          tailscale ip -4 2>/dev/null || true
+
+          echo
+          echo "===== FINAL CHECK COMPLETE ====="
+
+      # =========================================================
+      # 16. Keep Runner Alive
       # =========================================================
       - name: Keep Runner Alive
         shell: bash
         run: |
-          set +e
-
-          echo "=================================================="
-          echo "KEEPING RUNNER ALIVE"
-          echo "=================================================="
-
-          echo "Approximately 5h 40m."
-
-          END=$((SECONDS + 20400))
-
-          while [ "$SECONDS" -lt "$END" ]; do
-
-            REMAINING=$((END - SECONDS))
-
-            echo
-            echo "=================================================="
-            echo "REMOTE SESSION STATUS"
-            echo "Remaining seconds: $REMAINING"
-            echo "=================================================="
-
-            echo
-            echo "Tailscale:"
-
-            /Applications/Tailscale.app/Contents/MacOS/Tailscale \
-              status \
-              2>&1 || true
-
-            echo
-            echo "Tailscale IP:"
-
-            /Applications/Tailscale.app/Contents/MacOS/Tailscale \
-              ip -4 \
-              2>&1 || true
-
-            echo
-            echo "RDP port:"
-
-            sudo lsof \
-              -nP \
-              -iTCP:3390 \
-              -sTCP:LISTEN \
-              2>&1 || true
-
-            echo
-            echo "macrdp:"
-
-            ps aux |
-              grep macrdp |
-              grep -v grep || true
-
-            echo
-            echo "Tailscale processes:"
-
-            ps aux |
-              grep -i tailscale |
-              grep -v grep || true
-
-            sleep 60
-
-          done
-
           echo
-          echo "5h40m elapsed."
+          echo "======================================================"
+          echo " macOS RDP SESSION IS ACTIVE"
+          echo "======================================================"
+          echo
+          echo "The GitHub runner will stay alive."
+          echo "Connect using Microsoft Remote Desktop through Tailscale."
+          echo
+          echo "Duration: approximately 5 hours 40 minutes"
+          echo
+
+          sleep 20400
 
       # =========================================================
-      # 21. CLEANUP
+      # 17. Cleanup
       # =========================================================
       - name: Cleanup
         if: always()
         shell: bash
-        env:
-          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
           set +e
 
-          echo "=================================================="
-          echo "CLEANUP"
-          echo "=================================================="
+          echo "===== CLEANUP ====="
 
-          if [ -n "$MACOS_USERNAME" ]; then
+          echo
+          echo "Stopping macrdp..."
 
-            USER_ID=$(id -u "$MACOS_USERNAME" 2>/dev/null)
-
-            if [ -n "$USER_ID" ]; then
-
-              sudo launchctl bootout \
-                "gui/$USER_ID/com.macrdp.server" \
-                2>/dev/null || true
-
-            fi
-
-          fi
+          pkill -f macrdp || true
 
           echo
           echo "Stopping Tailscale..."
 
-          /Applications/Tailscale.app/Contents/MacOS/Tailscale \
-            down \
-            2>/dev/null || true
+          sudo tailscale down || true
 
           echo
           echo "Cleanup complete."
+
+      # =========================================================
+      # 18. Final
+      # =========================================================
+      - name: Final
+        if: always()
+        shell: bash
+        run: |
+          echo
+          echo "======================================================"
+          echo " Workflow finished"
+          echo "======================================================"
