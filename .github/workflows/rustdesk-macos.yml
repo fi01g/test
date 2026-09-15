@@ -6,7 +6,7 @@ on:
 jobs:
   macos:
     runs-on: macos-latest
-    timeout-minutes: 360
+    timeout-minutes: 350
 
     steps:
 
@@ -79,12 +79,9 @@ jobs:
           echo "$MACOS_USERNAME"
 
           if id "$MACOS_USERNAME" >/dev/null 2>&1; then
-
             echo ""
             echo "User already exists."
-
           else
-
             echo ""
             echo "Creating user..."
 
@@ -94,7 +91,6 @@ jobs:
               -password "$MACOS_PASSWORD"
 
             echo "User created."
-
           fi
 
           echo ""
@@ -336,6 +332,9 @@ jobs:
           echo "RustDesk ID:"
           echo "$FINAL_ID"
 
+          # Save ID for Telegram step
+          echo "FINAL_RUSTDESK_ID=$FINAL_ID" >> "$GITHUB_ENV"
+
 
       # =========================================================
       # 7. START RUSTDESK AS ABDULRAHMAN
@@ -423,7 +422,125 @@ jobs:
 
 
       # =========================================================
-      # 9. FINAL CHECK
+      # 9. SEND RUSTDESK DATA TO TELEGRAM
+      # =========================================================
+      - name: Send Telegram With Copy Buttons
+        shell: bash
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
+
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " SENDING RUSTDESK DATA TO TELEGRAM"
+          echo "=========================================="
+
+          ID="$FINAL_RUSTDESK_ID"
+          PASSWORD="$RUSTDESK_PASSWORD"
+
+          if [ -z "$ID" ]; then
+            echo "ERROR: RustDesk ID is empty."
+            exit 1
+          fi
+
+          if [ -z "$PASSWORD" ]; then
+            echo "ERROR: RustDesk password is empty."
+            exit 1
+          fi
+
+          if [ -z "$BOT_TOKEN" ]; then
+            echo "ERROR: TELEGRAM_BOT_TOKEN is empty."
+            exit 1
+          fi
+
+          if [ -z "$CHAT_ID" ]; then
+            echo "ERROR: TELEGRAM_CHAT_ID is empty."
+            exit 1
+          fi
+
+          export ID
+          export PASSWORD
+
+          python3 <<'PY'
+          import os
+          import json
+          import urllib.request
+
+          bot_token = os.environ["BOT_TOKEN"]
+          chat_id = os.environ["CHAT_ID"]
+          rustdesk_id = os.environ["ID"]
+          password = os.environ["PASSWORD"]
+
+          keyboard = {
+              "inline_keyboard": [
+                  [
+                      {
+                          "text": "📋 نسخ ID",
+                          "copy_text": {
+                              "text": rustdesk_id
+                          }
+                      }
+                  ],
+                  [
+                      {
+                          "text": "🔑 نسخ الباسورد",
+                          "copy_text": {
+                              "text": password
+                          }
+                      }
+                  ]
+              ]
+          }
+
+          text = (
+              "✅ macOS RustDesk جاهز\n\n"
+              f"🆔 ID: {rustdesk_id}\n"
+              f"🔐 Password: {password}\n\n"
+              "اضغط على الزر لنسخ البيانات."
+          )
+
+          payload = {
+              "chat_id": chat_id,
+              "text": text,
+              "reply_markup": keyboard
+          }
+
+          data = json.dumps(payload).encode("utf-8")
+
+          url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+
+          request = urllib.request.Request(
+              url,
+              data=data,
+              headers={
+                  "Content-Type": "application/json"
+              },
+              method="POST"
+          )
+
+          with urllib.request.urlopen(request) as response:
+              result = json.loads(response.read().decode("utf-8"))
+
+          if not result.get("ok"):
+              raise RuntimeError(result)
+
+          message_id = result["result"]["message_id"]
+
+          print(f"Telegram message sent: {message_id}")
+
+          with open("/tmp/telegram_message_id.txt", "w") as f:
+              f.write(str(message_id))
+
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"TELEGRAM_MESSAGE_ID={message_id}\n")
+          PY
+
+
+      # =========================================================
+      # 10. FINAL CHECK
       # =========================================================
       - name: Final Check
         shell: bash
@@ -459,9 +576,13 @@ jobs:
           echo "RustDesk:"
           pgrep -fl RustDesk || true
 
+          echo ""
+          echo "Final RustDesk ID:"
+          echo "$FINAL_RUSTDESK_ID"
+
 
       # =========================================================
-      # 10. KEEP RUNNER ALIVE
+      # 11. KEEP RUNNER ALIVE
       # =========================================================
       - name: Keep Runner Alive
         shell: bash
@@ -470,7 +591,11 @@ jobs:
           echo " RUNNER IS ONLINE"
           echo "=========================================="
 
-          while true
+          # حوالي 5 ساعات و40 دقيقة
+          # ثم تبدأ خطوات النهاية وإعادة التشغيل
+          END_TIME=$(( $(date +%s) + 20400 ))
+
+          while [ "$(date +%s)" -lt "$END_TIME" ]
           do
             echo ""
             echo "[$(date)] Runner alive"
@@ -487,3 +612,122 @@ jobs:
 
             sleep 300
           done
+
+          echo ""
+          echo "Keep Alive period finished."
+
+
+      # =========================================================
+      # 12. EDIT TELEGRAM MESSAGE TO EXPIRED
+      # =========================================================
+      - name: Edit Telegram Expired
+        if: always()
+        shell: bash
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+        run: |
+          echo "=========================================="
+          echo " MARKING TELEGRAM MESSAGE AS EXPIRED"
+          echo "=========================================="
+
+          MSG_ID="$TELEGRAM_MESSAGE_ID"
+
+          if [ -z "$MSG_ID" ] && [ -f /tmp/telegram_message_id.txt ]; then
+            MSG_ID=$(cat /tmp/telegram_message_id.txt)
+          fi
+
+          if [ -z "$MSG_ID" ]; then
+            echo "No Telegram message ID found."
+            exit 0
+          fi
+
+          python3 <<'PY'
+          import os
+          import json
+          import urllib.request
+
+          bot_token = os.environ["BOT_TOKEN"]
+          chat_id = os.environ["CHAT_ID"]
+          message_id = os.environ["MSG_ID"]
+
+          text = (
+              "❌ macOS RustDesk انتهى\n\n"
+              "🆔 الـID السابق لم يعد متاحًا.\n"
+              "🔄 سيتم تشغيل سيرفر macOS جديد تلقائيًا.\n\n"
+              "انتظر الرسالة الجديدة."
+          )
+
+          payload = {
+              "chat_id": chat_id,
+              "message_id": int(message_id),
+              "text": text
+          }
+
+          data = json.dumps(payload).encode("utf-8")
+
+          url = f"https://api.telegram.org/bot{bot_token}/editMessageText"
+
+          request = urllib.request.Request(
+              url,
+              data=data,
+              headers={
+                  "Content-Type": "application/json"
+              },
+              method="POST"
+          )
+
+          try:
+              with urllib.request.urlopen(request) as response:
+                  print(response.read().decode("utf-8"))
+          except Exception as e:
+              print(f"Telegram edit warning: {e}")
+          PY
+        env:
+          MSG_ID: ${{ env.TELEGRAM_MESSAGE_ID }}
+
+
+      # =========================================================
+      # 13. TRIGGER NEXT MACOS RUN
+      # =========================================================
+      - name: Trigger Next Run
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+        run: |
+          echo "=========================================="
+          echo " STARTING NEXT MACOS RUN"
+          echo "=========================================="
+
+          gh workflow run rustdesk-macos.yml
+
+          echo ""
+          echo "SUCCESS: Next macOS workflow triggered."
+
+
+      # =========================================================
+      # 14. FINAL
+      # =========================================================
+      - name: Restart Information
+        if: always()
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo " MACOS CYCLE FINISHED"
+          echo "=========================================="
+
+          echo ""
+          echo "The current macOS runner is ending."
+
+          echo ""
+          echo "A new run of:"
+          echo "rustdesk-macos.yml"
+
+          echo "has been requested."
+
+          echo ""
+          echo "The new run will create a new RustDesk ID"
+          echo "and send a new Telegram message."
