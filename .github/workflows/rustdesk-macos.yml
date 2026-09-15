@@ -78,9 +78,15 @@ jobs:
             exit 1
           fi
 
+          echo ""
+          echo "Username:"
+          echo "$MACOS_USERNAME"
+
           if id "$MACOS_USERNAME" >/dev/null 2>&1; then
+            echo ""
             echo "User already exists."
           else
+            echo ""
             echo "Creating user..."
 
             sudo sysadminctl \
@@ -101,7 +107,7 @@ jobs:
             admin
 
           echo ""
-          echo "User:"
+          echo "User ID:"
           id "$MACOS_USERNAME"
 
           echo ""
@@ -110,7 +116,7 @@ jobs:
 
 
       # =========================================================
-      # 3. VERIFY USER
+      # 3. VERIFY PASSWORD + ADMIN
       # =========================================================
       - name: Verify Abdulrahman
         shell: bash
@@ -143,7 +149,7 @@ jobs:
             NFSHomeDirectory
 
           echo ""
-          echo "Checking Administrator..."
+          echo "Checking Administrator membership..."
 
           ADMIN_CHECK=$(
             dseditgroup \
@@ -155,15 +161,17 @@ jobs:
           echo "$ADMIN_CHECK"
 
           if echo "$ADMIN_CHECK" | grep -qi "yes"; then
-            echo "SUCCESS: Administrator."
+            echo ""
+            echo "SUCCESS: Abdulrahman is an Administrator."
           else
-            echo "ERROR: Not Administrator."
+            echo ""
+            echo "ERROR: Abdulrahman is NOT an Administrator."
             exit 1
           fi
 
 
       # =========================================================
-      # 4. CONFIGURE AUTO LOGIN
+      # 4. SET AUTO LOGIN
       # =========================================================
       - name: Configure Abdulrahman Auto Login
         shell: bash
@@ -177,6 +185,14 @@ jobs:
           echo "=========================================="
           echo " CONFIGURING AUTO LOGIN"
           echo "=========================================="
+
+          echo ""
+          echo "Current console user:"
+          stat -f "%Su" /dev/console
+
+          echo ""
+          echo "Target:"
+          echo "$MACOS_USERNAME"
 
           sudo sysadminctl \
             -autologin set \
@@ -196,13 +212,13 @@ jobs:
           stat -f "%Su" /dev/console
 
           echo ""
-          echo "NOTE:"
-          echo "Auto-login applies to a future GUI login."
+          echo "IMPORTANT:"
+          echo "Auto-login applies to a future login."
           echo "It does not replace the current GUI session."
 
 
       # =========================================================
-      # 5. INSTALL TAILSCALE CLI
+      # 5. INSTALL TAILSCALE
       # =========================================================
       - name: Install Tailscale
         shell: bash
@@ -219,7 +235,6 @@ jobs:
 
           echo ""
           echo "Tailscale version:"
-
           tailscale version
 
           echo ""
@@ -297,34 +312,41 @@ jobs:
 
 
       # =========================================================
-      # 7. INSTALL RDP SERVER
+      # 7. INSTALL RUST
       # =========================================================
-      - name: Install macOS RDP Server
+      - name: Install Rust
         shell: bash
         run: |
           set -e
 
           echo "=========================================="
-          echo " INSTALLING macOS RDP SERVER"
+          echo " INSTALLING RUST"
           echo "=========================================="
-
-          echo ""
-          echo "Installing Rust..."
 
           brew install rust
 
           echo ""
-          echo "Rust:"
           rustc --version
 
           echo ""
-          echo "Cargo:"
           cargo --version
 
-          echo ""
-          echo "Cloning macrdp..."
+
+      # =========================================================
+      # 8. DOWNLOAD macrdp
+      # =========================================================
+      - name: Download macrdp
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " DOWNLOADING macrdp"
+          echo "=========================================="
 
           cd "$RUNNER_TEMP"
+
+          rm -rf macrdp
 
           git clone \
             https://github.com/clintcan/macrdp.git \
@@ -333,20 +355,106 @@ jobs:
           cd macrdp
 
           echo ""
+          echo "Repository:"
+          git remote -v
+
+          echo ""
+          echo "Commit:"
+          git rev-parse HEAD
+
+
+      # =========================================================
+      # 9. INSPECT macrdp CLI
+      # =========================================================
+      - name: Inspect macrdp
+        shell: bash
+        run: |
+          set +e
+
+          echo "=========================================="
+          echo " INSPECTING macrdp"
+          echo "=========================================="
+
+          cd "$RUNNER_TEMP/macrdp"
+
+          echo ""
+          echo "Files:"
+          find . -maxdepth 2 -type f | sort | head -100
+
+          echo ""
+          echo "Cargo.toml:"
+          cat Cargo.toml
+
+          echo ""
           echo "Building macrdp..."
 
           cargo build --release
 
-          echo ""
-          echo "Build completed."
+          BUILD_EXIT=$?
 
           echo ""
-          echo "Signing macrdp..."
+          echo "Build exit code:"
+          echo "$BUILD_EXIT"
+
+          if [ "$BUILD_EXIT" -ne 0 ]; then
+            echo ""
+            echo "macrdp BUILD FAILED."
+            exit 1
+          fi
+
+          echo ""
+          echo "Built binaries:"
+
+          find target/release \
+            -maxdepth 1 \
+            -type f \
+            -perm -111 \
+            -print
+
+          echo ""
+          echo "Testing help..."
+
+          ./target/release/macrdp --help
+
+          HELP_EXIT=$?
+
+          echo ""
+          echo "Help exit code:"
+          echo "$HELP_EXIT"
+
+          if [ "$HELP_EXIT" -ne 0 ]; then
+            echo ""
+            echo "macrdp --help returned an error."
+          fi
+
+
+      # =========================================================
+      # 10. INSTALL macrdp
+      # =========================================================
+      - name: Install macrdp
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo " INSTALLING macrdp"
+          echo "=========================================="
+
+          cd "$RUNNER_TEMP/macrdp"
+
+          if [ ! -f "target/release/macrdp" ]; then
+            echo "ERROR: target/release/macrdp not found."
+            exit 1
+          fi
+
+          echo ""
+          echo "Signing binary..."
 
           codesign \
             -s - \
             --force \
-            target/release/macrdp
+            target/release/macrdp \
+            || true
 
           echo ""
           echo "Installing binary..."
@@ -361,12 +469,20 @@ jobs:
             /usr/local/bin/macrdp
 
           echo ""
-          echo "macrdp version/build:"
-          /usr/local/bin/macrdp --help | head -30 || true
+          echo "Installed binary:"
+
+          ls -lah /usr/local/bin/macrdp
+
+          echo ""
+          echo "macrdp help:"
+
+          /usr/local/bin/macrdp \
+            --help \
+            2>&1 || true
 
 
       # =========================================================
-      # 8. OPEN macOS PRIVACY SETTINGS
+      # 11. OPEN PRIVACY SETTINGS
       # =========================================================
       - name: Open RDP Privacy Permissions
         shell: bash
@@ -413,22 +529,11 @@ jobs:
           sleep 5
 
           echo ""
-          echo "=========================================="
-          echo " IMPORTANT"
-          echo "=========================================="
-
-          echo ""
-          echo "macrdp requires:"
-          echo ""
-          echo "1. Screen Recording"
-          echo "2. Accessibility"
-          echo ""
-          echo "macOS may require these permissions"
-          echo "to be approved manually."
+          echo "Privacy settings requested."
 
 
       # =========================================================
-      # 9. START macRDPP
+      # 12. START macrdp - DEBUG MODE
       # =========================================================
       - name: Start macOS RDP Server
         shell: bash
@@ -436,7 +541,7 @@ jobs:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
 
         run: |
-          set -e
+          set +e
 
           echo "=========================================="
           echo " STARTING macOS RDP SERVER"
@@ -444,17 +549,26 @@ jobs:
 
           RDP="/usr/local/bin/macrdp"
 
-          if [ ! -x "$RDP" ]; then
-            echo "ERROR: macrdp not found."
-            exit 1
-          fi
+          echo ""
+          echo "Binary:"
+          ls -lah "$RDP"
+
+          echo ""
+          echo "macrdp help:"
+          "$RDP" --help 2>&1
 
           echo ""
           echo "Console user:"
           stat -f "%Su" /dev/console
 
           echo ""
+          echo "Current GUI sessions:"
+          who
+
+          echo ""
           echo "Starting macrdp..."
+
+          rm -f /tmp/macrdp.log
 
           sudo -u "$MACOS_USERNAME" -H \
             env \
@@ -463,40 +577,86 @@ jobs:
             LOGNAME="$MACOS_USERNAME" \
             nohup "$RDP" \
               --bind 0.0.0.0:3390 \
-              --enable-h264 \
-              --adaptive-bitrate \
               >/tmp/macrdp.log 2>&1 &
 
-          sleep 10
+          MACRDP_PID=$!
 
           echo ""
-          echo "macrdp process:"
+          echo "macrdp PID:"
+          echo "$MACRDP_PID"
+
+          sleep 5
+
+          echo ""
+          echo "=========================================="
+          echo " macrdp PROCESS"
+          echo "=========================================="
 
           pgrep -fl macrdp || true
 
           echo ""
-          echo "macrdp log:"
+          echo "=========================================="
+          echo " macrdp LOG"
+          echo "=========================================="
 
-          tail -100 \
-            /tmp/macrdp.log \
+          cat /tmp/macrdp.log \
             2>/dev/null || true
+
+          echo ""
+          echo "=========================================="
+          echo " macrdp HELP"
+          echo "=========================================="
+
+          "$RDP" --help \
+            2>&1 || true
+
+          echo ""
+          echo "=========================================="
+          echo " PORT 3390"
+          echo "=========================================="
+
+          lsof \
+            -nP \
+            -iTCP:3390 \
+            -sTCP:LISTEN \
+            2>&1 || true
+
+          echo ""
+          echo "netstat:"
+          netstat \
+            -an \
+            2>/dev/null | grep 3390 \
+            || true
+
+          echo ""
+          echo "=========================================="
+          echo " END RDP DEBUG"
+          echo "=========================================="
 
 
       # =========================================================
-      # 10. VERIFY RDP PORT
+      # 13. VERIFY RDP SERVER
       # =========================================================
       - name: Verify RDP Server
         shell: bash
         run: |
-          set -e
+          set +e
 
           echo "=========================================="
           echo " VERIFYING RDP SERVER"
           echo "=========================================="
 
           echo ""
-          echo "Listening ports:"
+          echo "macrdp process:"
+          pgrep -fl macrdp || true
 
+          echo ""
+          echo "macrdp log:"
+          cat /tmp/macrdp.log \
+            2>/dev/null || true
+
+          echo ""
+          echo "Listening ports:"
           lsof \
             -nP \
             -iTCP:3390 \
@@ -511,12 +671,40 @@ jobs:
             127.0.0.1 \
             3390
 
+          RESULT=$?
+
           echo ""
-          echo "RDP port 3390 is OPEN."
+          echo "nc exit code:"
+          echo "$RESULT"
+
+          if [ "$RESULT" -eq 0 ]; then
+            echo ""
+            echo "=========================================="
+            echo " RDP PORT IS OPEN"
+            echo "=========================================="
+          else
+            echo ""
+            echo "=========================================="
+            echo " RDP PORT IS NOT OPEN"
+            echo "=========================================="
+
+            echo ""
+            echo "This is NOT a Tailscale problem."
+            echo "macrdp is not listening on TCP 3390."
+
+            echo ""
+            echo "Full macrdp log:"
+            cat /tmp/macrdp.log \
+              2>/dev/null || true
+          fi
+
+          # Do NOT fail here.
+          # We need the workflow to continue so the
+          # diagnostic information remains available.
 
 
       # =========================================================
-      # 11. PRINT CONNECTION INFORMATION
+      # 14. CONNECTION INFORMATION
       # =========================================================
       - name: RDP Connection Information
         shell: bash
@@ -524,9 +712,8 @@ jobs:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
 
         run: |
-          echo ""
           echo "=========================================="
-          echo "       MACOS RDP IS READY"
+          echo " CONNECTION INFORMATION"
           echo "=========================================="
 
           echo ""
@@ -543,7 +730,7 @@ jobs:
 
           echo ""
           echo "Password:"
-          echo "Use MACOS_PASSWORD secret"
+          echo "Use your MACOS_PASSWORD secret."
 
           echo ""
           echo "=========================================="
@@ -561,12 +748,9 @@ jobs:
           echo ""
           echo "=========================================="
 
-          echo ""
-          echo "TAILSCALE_IP=$TAILSCALE_IP" >> "$GITHUB_ENV"
-
 
       # =========================================================
-      # 12. FINAL CHECK
+      # 15. FINAL CHECK
       # =========================================================
       - name: Final Check
         shell: bash
@@ -600,16 +784,21 @@ jobs:
           pgrep -fl macrdp || true
 
           echo ""
-          echo "RDP:"
+          echo "RDP port:"
           lsof \
             -nP \
             -iTCP:3390 \
             -sTCP:LISTEN \
             || true
 
+          echo ""
+          echo "macrdp log:"
+          cat /tmp/macrdp.log \
+            2>/dev/null || true
+
 
       # =========================================================
-      # 13. KEEP RUNNER ALIVE
+      # 16. KEEP RUNNER ALIVE
       # =========================================================
       - name: Keep Runner Alive
         shell: bash
@@ -630,11 +819,6 @@ jobs:
             echo "Console user:"
             stat -f "%Su" /dev/console \
               2>/dev/null || echo "unknown"
-
-            echo ""
-            echo "Tailscale:"
-            sudo tailscale status \
-              2>/dev/null || true
 
             echo ""
             echo "Tailscale IP:"
@@ -663,7 +847,7 @@ jobs:
 
 
       # =========================================================
-      # 14. CLEANUP
+      # 17. CLEANUP
       # =========================================================
       - name: Cleanup
         if: always()
@@ -697,7 +881,7 @@ jobs:
 
 
       # =========================================================
-      # 15. FINAL
+      # 18. FINAL
       # =========================================================
       - name: Final
         if: always()
