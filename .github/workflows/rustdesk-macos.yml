@@ -3,6 +3,10 @@ name: macOS RustDesk - Abdulrahman
 on:
   workflow_dispatch:
 
+permissions:
+  actions: write
+  contents: read
+
 jobs:
   macos:
     runs-on: macos-latest
@@ -332,7 +336,11 @@ jobs:
           echo "RustDesk ID:"
           echo "$FINAL_ID"
 
-          # Save ID for Telegram step
+          if [ -z "$FINAL_ID" ]; then
+            echo "ERROR: Final RustDesk ID is empty."
+            exit 1
+          fi
+
           echo "FINAL_RUSTDESK_ID=$FINAL_ID" >> "$GITHUB_ENV"
 
 
@@ -474,43 +482,46 @@ jobs:
           rustdesk_id = os.environ["ID"]
           password = os.environ["PASSWORD"]
 
-          keyboard = {
-              "inline_keyboard": [
-                  [
-                      {
-                          "text": "📋 نسخ ID",
-                          "copy_text": {
-                              "text": rustdesk_id
-                          }
-                      }
-                  ],
-                  [
-                      {
-                          "text": "🔑 نسخ الباسورد",
-                          "copy_text": {
-                              "text": password
-                          }
-                      }
-                  ]
-              ]
-          }
-
-          text = (
-              "✅ macOS RustDesk جاهز\n\n"
-              f"🆔 ID: {rustdesk_id}\n"
-              f"🔐 Password: {password}\n\n"
-              "اضغط على الزر لنسخ البيانات."
-          )
-
           payload = {
               "chat_id": chat_id,
-              "text": text,
-              "reply_markup": keyboard
+              "text": (
+                  "✅ macOS RustDesk جاهز\n\n"
+                  f"🆔 ID: {rustdesk_id}\n"
+                  f"🔐 Password: {password}\n\n"
+                  "اضغط على الزر لنسخ البيانات."
+              ),
+              "reply_markup": {
+                  "inline_keyboard": [
+                      [
+                          {
+                              "text": "📋 نسخ ID",
+                              "copy_text": {
+                                  "text": rustdesk_id
+                              }
+                          }
+                      ],
+                      [
+                          {
+                              "text": "🔑 نسخ الباسورد",
+                              "copy_text": {
+                                  "text": password
+                              }
+                          }
+                      ]
+                  ]
+              }
           }
 
-          data = json.dumps(payload).encode("utf-8")
+          data = json.dumps(
+              payload,
+              ensure_ascii=False
+          ).encode("utf-8")
 
-          url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+          url = (
+              "https://api.telegram.org/bot"
+              + bot_token
+              + "/sendMessage"
+          )
 
           request = urllib.request.Request(
               url,
@@ -522,20 +533,37 @@ jobs:
           )
 
           with urllib.request.urlopen(request) as response:
-              result = json.loads(response.read().decode("utf-8"))
+              result = json.loads(
+                  response.read().decode("utf-8")
+              )
 
           if not result.get("ok"):
               raise RuntimeError(result)
 
           message_id = result["result"]["message_id"]
 
-          print(f"Telegram message sent: {message_id}")
+          print(
+              "Telegram message sent successfully."
+          )
 
-          with open("/tmp/telegram_message_id.txt", "w") as f:
+          print(
+              "Telegram message ID:",
+              message_id
+          )
+
+          with open(
+              "/tmp/telegram_message_id.txt",
+              "w"
+          ) as f:
               f.write(str(message_id))
 
-          with open(os.environ["GITHUB_ENV"], "a") as f:
-              f.write(f"TELEGRAM_MESSAGE_ID={message_id}\n")
+          with open(
+              os.environ["GITHUB_ENV"],
+              "a"
+          ) as f:
+              f.write(
+                  f"TELEGRAM_MESSAGE_ID={message_id}\n"
+              )
           PY
 
 
@@ -591,8 +619,10 @@ jobs:
           echo " RUNNER IS ONLINE"
           echo "=========================================="
 
-          # حوالي 5 ساعات و40 دقيقة
-          # ثم تبدأ خطوات النهاية وإعادة التشغيل
+          # 20400 seconds = 5 hours 40 minutes
+          # Leave enough time for the final Telegram
+          # and restart steps before the 350-minute limit.
+
           END_TIME=$(( $(date +%s) + 20400 ))
 
           while [ "$(date +%s)" -lt "$END_TIME" ]
@@ -626,13 +656,12 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MSG_ID: ${{ env.TELEGRAM_MESSAGE_ID }}
 
         run: |
           echo "=========================================="
           echo " MARKING TELEGRAM MESSAGE AS EXPIRED"
           echo "=========================================="
-
-          MSG_ID="$TELEGRAM_MESSAGE_ID"
 
           if [ -z "$MSG_ID" ] && [ -f /tmp/telegram_message_id.txt ]; then
             MSG_ID=$(cat /tmp/telegram_message_id.txt)
@@ -643,31 +672,34 @@ jobs:
             exit 0
           fi
 
+          export MSG_ID
+
           python3 <<'PY'
           import os
           import json
           import urllib.request
 
-          bot_token = os.environ["BOT_TOKEN"]
-          chat_id = os.environ["CHAT_ID"]
-          message_id = os.environ["MSG_ID"]
-
-          text = (
-              "❌ macOS RustDesk انتهى\n\n"
-              "🆔 الـID السابق لم يعد متاحًا.\n"
-              "🔄 سيتم تشغيل سيرفر macOS جديد تلقائيًا.\n\n"
-              "انتظر الرسالة الجديدة."
-          )
-
           payload = {
-              "chat_id": chat_id,
-              "message_id": int(message_id),
-              "text": text
+              "chat_id": os.environ["CHAT_ID"],
+              "message_id": int(os.environ["MSG_ID"]),
+              "text": (
+                  "❌ macOS RustDesk انتهى\n\n"
+                  "🆔 الـID السابق لم يعد متاحًا.\n"
+                  "🔄 سيتم تشغيل سيرفر macOS جديد تلقائيًا.\n\n"
+                  "انتظر الرسالة الجديدة."
+              )
           }
 
-          data = json.dumps(payload).encode("utf-8")
+          data = json.dumps(
+              payload,
+              ensure_ascii=False
+          ).encode("utf-8")
 
-          url = f"https://api.telegram.org/bot{bot_token}/editMessageText"
+          url = (
+              "https://api.telegram.org/bot"
+              + os.environ["BOT_TOKEN"]
+              + "/editMessageText"
+          )
 
           request = urllib.request.Request(
               url,
@@ -678,18 +710,17 @@ jobs:
               method="POST"
           )
 
-          try:
-              with urllib.request.urlopen(request) as response:
-                  print(response.read().decode("utf-8"))
-          except Exception as e:
-              print(f"Telegram edit warning: {e}")
+          with urllib.request.urlopen(request) as response:
+              print(
+                  response.read().decode("utf-8")
+              )
           PY
-        env:
-          MSG_ID: ${{ env.TELEGRAM_MESSAGE_ID }}
+
+          echo "Telegram message marked as expired."
 
 
       # =========================================================
-      # 13. TRIGGER NEXT MACOS RUN
+      # 13. TRIGGER NEXT RUN
       # =========================================================
       - name: Trigger Next Run
         if: always()
