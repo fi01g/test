@@ -86,12 +86,10 @@ jobs:
 
           echo
           echo "===== USER INFO ====="
-
           id "$MACOS_USERNAME"
 
           echo
           echo "===== UID ====="
-
           echo "$TARGET_UID"
 
       # =========================================================
@@ -116,7 +114,6 @@ jobs:
 
           echo
           echo "===== USER GROUPS ====="
-
           id "$MACOS_USERNAME"
 
           echo
@@ -144,7 +141,6 @@ jobs:
 
           echo
           echo "===== ID ====="
-
           id "$MACOS_USERNAME"
 
           echo
@@ -213,7 +209,6 @@ jobs:
 
           echo
           echo "===== TAILSCALE ====="
-
           tailscale version
 
       # =========================================================
@@ -393,9 +388,6 @@ jobs:
       # =========================================================
       - name: Start macrdp
         shell: bash
-        env:
-          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
         run: |
           set +e
 
@@ -405,8 +397,8 @@ jobs:
 
           /usr/local/bin/macrdp \
             --bind 0.0.0.0:3390 \
-            --username "$MACOS_USERNAME" \
-            --password "$MACOS_PASSWORD" \
+            --username "${{ secrets.MACOS_USERNAME }}" \
+            --password "${{ secrets.MACOS_PASSWORD }}" \
             --enable-h264 \
             --fps 60 \
             --bitrate 8 \
@@ -439,12 +431,14 @@ jobs:
               echo
               echo "ERROR: macrdp exited."
 
-              cat \
+              echo
+              echo "===== LAST 100 LOG LINES ====="
+
+              tail -100 \
                 /tmp/macrdp/console.log \
                 2>/dev/null || true
 
               exit 1
-
             fi
 
             if lsof \
@@ -462,17 +456,27 @@ jobs:
               cat /tmp/macrdp/port.txt
 
               break
-
             fi
 
             sleep 2
-
           done
 
           if [ "$READY" -ne 1 ]; then
+            echo
             echo "ERROR: Port 3390 did not open."
+
+            echo
+            echo "===== LAST 100 LOG LINES ====="
+
+            tail -100 \
+              /tmp/macrdp/console.log \
+              2>/dev/null || true
+
             exit 1
           fi
+
+          echo
+          echo "macRDP is READY."
 
       # =========================================================
       # 13. SEND TELEGRAM ONLINE
@@ -482,7 +486,6 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
           set -e
 
@@ -584,17 +587,14 @@ jobs:
 
           echo
           echo "===== ACTIVE GUI USER ====="
-
           stat -f "%Su" /dev/console
 
           echo
           echo "===== LOGIN SESSIONS ====="
-
           who || true
 
           echo
           echo "===== TARGET USER ====="
-
           id "$MACOS_USERNAME"
 
           echo
@@ -607,7 +607,6 @@ jobs:
 
           echo
           echo "===== MACRDP ====="
-
           pgrep -fl macrdp || true
 
           echo
@@ -621,7 +620,6 @@ jobs:
 
           echo
           echo "===== TAILSCALE IP ====="
-
           cat /tmp/tailscale_ip
 
           echo
@@ -684,7 +682,6 @@ jobs:
 
             echo
             echo "===== MACRDP ====="
-
             pgrep -fl macrdp || true
 
             echo
@@ -703,7 +700,7 @@ jobs:
               2>/dev/null || true
 
             echo
-            echo "===== MACRDP LOG ====="
+            echo "===== MACRDP LAST 50 LOG LINES ====="
 
             tail -50 \
               /tmp/macrdp/console.log \
@@ -712,6 +709,11 @@ jobs:
             sleep 30
 
           done
+
+          echo
+          echo "=================================================="
+          echo "KEEP ALIVE FINISHED"
+          echo "=================================================="
 
       # =========================================================
       # 16. FINAL DIAGNOSTIC
@@ -730,22 +732,18 @@ jobs:
 
           echo
           echo "===== macOS ====="
-
           sw_vers
 
           echo
           echo "===== CONSOLE USER ====="
-
           stat -f "%Su" /dev/console
 
           echo
           echo "===== WHO ====="
-
           who || true
 
           echo
           echo "===== TARGET USER ====="
-
           id "$MACOS_USERNAME" || true
 
           echo
@@ -759,17 +757,14 @@ jobs:
 
           echo
           echo "===== WINDOWSERVER ====="
-
           pgrep -fl WindowServer || true
 
           echo
           echo "===== LOGINWINDOW ====="
-
           pgrep -fl loginwindow || true
 
           echo
           echo "===== MACRDP ====="
-
           pgrep -fl macrdp || true
 
           echo
@@ -789,23 +784,26 @@ jobs:
             2>/dev/null || true
 
           echo
-          echo "===== MACRDP LOG ====="
+          echo "===== MACRDP LAST 100 LOG LINES ====="
 
-          cat \
+          tail -100 \
             /tmp/macrdp/console.log \
             2>/dev/null || true
 
           echo
-          echo "===== TAILSCALED LOG ====="
+          echo "===== TAILSCALED LAST 100 LOG LINES ====="
 
-          cat \
+          tail -100 \
             /tmp/tailscaled.log \
             2>/dev/null || true
 
+          echo
+          echo "FINAL DIAGNOSTIC COMPLETE."
+
       # =========================================================
-      # 17. CLEANUP + TELEGRAM OFFLINE
+      # 17. TELEGRAM OFFLINE
       # =========================================================
-      - name: Cleanup
+      - name: Telegram Offline
         if: always()
         shell: bash
         env:
@@ -815,7 +813,7 @@ jobs:
           set +e
 
           echo "=================================================="
-          echo "CLEANUP"
+          echo "TELEGRAM OFFLINE UPDATE"
           echo "=================================================="
 
           IP=""
@@ -831,21 +829,14 @@ jobs:
           fi
 
           echo
-          echo "Tailscale IP:"
+          echo "IP:"
           echo "$IP"
 
           echo
-          echo "Telegram Message ID:"
+          echo "Message ID:"
           echo "$MSG_ID"
 
-          # =====================================================
-          # EDIT OLD TELEGRAM MESSAGE
-          # =====================================================
-
           if [ -n "$MSG_ID" ]; then
-
-            echo
-            echo "Editing Telegram message..."
 
             OFFLINE_TEXT=$(cat <<EOF
           🔴 macOS RDP OFFLINE
@@ -860,13 +851,17 @@ jobs:
           EOF
           )
 
-            curl -fsS \
-              -X POST \
-              "https://api.telegram.org/bot${BOT_TOKEN}/editMessageText" \
-              --data-urlencode "chat_id=${CHAT_ID}" \
-              --data-urlencode "message_id=${MSG_ID}" \
-              --data-urlencode "text=${OFFLINE_TEXT}" \
-              || true
+            RESPONSE=$(
+              curl -sS \
+                -X POST \
+                "https://api.telegram.org/bot${BOT_TOKEN}/editMessageText" \
+                --data-urlencode "chat_id=${CHAT_ID}" \
+                --data-urlencode "message_id=${MSG_ID}" \
+                --data-urlencode "text=${OFFLINE_TEXT}"
+            )
+
+            echo
+            echo "$RESPONSE"
 
             echo
             echo "Old Telegram message updated."
@@ -878,9 +873,20 @@ jobs:
 
           fi
 
-          # =====================================================
-          # STOP MACRDP
-          # =====================================================
+          exit 0
+
+      # =========================================================
+      # 18. CLEANUP
+      # =========================================================
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          set +e
+
+          echo "=================================================="
+          echo "CLEANUP"
+          echo "=================================================="
 
           if [ -f /tmp/macrdp.pid ]; then
 
@@ -890,17 +896,18 @@ jobs:
             echo "Stopping macrdp PID:"
             echo "$PID"
 
-            kill "$PID" \
-              2>/dev/null || true
+            if kill -0 "$PID" 2>/dev/null; then
+              kill -TERM "$PID" 2>/dev/null || true
+              sleep 2
+            fi
 
           fi
 
-          pkill -f macrdp \
-            2>/dev/null || true
+          echo
+          echo "Stopping remaining macrdp processes..."
 
-          # =====================================================
-          # STOP TAILSCALE
-          # =====================================================
+          pkill -TERM -f "/usr/local/bin/macrdp" \
+            2>/dev/null || true
 
           echo
           echo "Stopping Tailscale..."
@@ -911,8 +918,10 @@ jobs:
           echo
           echo "Cleanup complete."
 
+          exit 0
+
       # =========================================================
-      # 18. TRIGGER NEXT RUN
+      # 19. TRIGGER NEXT RUN
       # =========================================================
       - name: Trigger Next Run
         if: always()
@@ -934,26 +943,37 @@ jobs:
           echo "Branch:"
           echo "$GITHUB_REF_NAME"
 
-          curl -fsS \
-            -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/rustdesk-macos.yml/dispatches" \
-            -d "{\"ref\":\"${GITHUB_REF_NAME}\"}"
+          RESPONSE=$(
+            curl -sS \
+              -w "\nHTTP_STATUS:%{http_code}" \
+              -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/rustdesk-macos.yml/dispatches" \
+              -d "{\"ref\":\"${GITHUB_REF_NAME}\"}"
+          )
 
-          RESULT=$?
+          CURL_EXIT=$?
 
           echo
-          echo "Trigger result:"
-          echo "$RESULT"
+          echo "GitHub API response:"
+          echo "$RESPONSE"
 
-          if [ "$RESULT" -eq 0 ]; then
+          echo
+          echo "Curl exit:"
+          echo "$CURL_EXIT"
+
+          if [ "$CURL_EXIT" -eq 0 ]; then
             echo
-            echo "Next macOS run triggered successfully."
+            echo "=================================================="
+            echo "NEXT RUN TRIGGERED"
+            echo "=================================================="
           else
             echo
-            echo "Failed to trigger next run."
+            echo "=================================================="
+            echo "FAILED TO TRIGGER NEXT RUN"
+            echo "=================================================="
           fi
 
           exit 0
