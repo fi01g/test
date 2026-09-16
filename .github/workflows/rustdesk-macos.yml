@@ -50,7 +50,6 @@ jobs:
           echo "===== LOGINWINDOW ====="
           pgrep -fl loginwindow || true
 
-
       # =========================================================
       # 2. CREATE / VERIFY ADMIN USER
       # =========================================================
@@ -95,7 +94,6 @@ jobs:
 
           echo "$TARGET_UID"
 
-
       # =========================================================
       # 3. ADMIN GROUP
       # =========================================================
@@ -128,7 +126,6 @@ jobs:
             -o checkmember \
             -m "$MACOS_USERNAME" \
             admin
-
 
       # =========================================================
       # 4. VERIFY ADMINISTRATION
@@ -187,9 +184,8 @@ jobs:
             -U "$MACOS_USERNAME" \
             2>&1 || true
 
-
       # =========================================================
-      # 5. INSTALL TAILSCALE
+      # 5. PREPARE TAILSCALE
       # =========================================================
       - name: Install Tailscale
         shell: bash
@@ -220,7 +216,6 @@ jobs:
 
           tailscale version
 
-
       # =========================================================
       # 6. START TAILSCALE + TELEGRAM ONLINE
       # =========================================================
@@ -242,7 +237,6 @@ jobs:
           if pgrep -x tailscaled >/dev/null 2>&1; then
             echo "tailscaled already running."
           else
-
             sudo tailscaled \
               --state=/tmp/tailscale-state \
               > /tmp/tailscaled.log 2>&1 &
@@ -250,7 +244,6 @@ jobs:
             echo "tailscaled PID: $!"
 
             sleep 5
-
           fi
 
           echo
@@ -284,7 +277,6 @@ jobs:
           echo "RDP ADDRESS:"
           echo "$TAILSCALE_IP:3390"
 
-
           # =====================================================
           # TELEGRAM ONLINE MESSAGE
           # =====================================================
@@ -303,10 +295,7 @@ jobs:
 
 ⚡ <b>Status:</b> Online"
 
-          REPLY_MARKUP=$(cat <<EOF
-{"inline_keyboard":[[{"text":"📋 Copy IP","copy_text":{"text":"${TAILSCALE_IP}"}},{"text":"📋 Copy RDP","copy_text":{"text":"${TAILSCALE_IP}:3390"}}]]}
-EOF
-          )
+          REPLY_MARKUP="{\"inline_keyboard\":[[{\"text\":\"📋 Copy IP\",\"copy_text\":{\"text\":\"${TAILSCALE_IP}\"}},{\"text\":\"📋 Copy RDP\",\"copy_text\":{\"text\":\"${TAILSCALE_IP}:3390\"}}]]}"
 
           TELEGRAM_RESPONSE=$(
             curl -sS \
@@ -343,7 +332,6 @@ EOF
           echo
           echo "Telegram notification sent successfully."
 
-
       # =========================================================
       # 7. INSTALL RUST
       # =========================================================
@@ -371,7 +359,6 @@ EOF
           rustc --version
           cargo --version
 
-
       # =========================================================
       # 8. CLONE MACRDP
       # =========================================================
@@ -393,7 +380,6 @@ EOF
           cd "$HOME/macrdp"
 
           git status
-
 
       # =========================================================
       # 9. BUILD MACRDP
@@ -419,7 +405,6 @@ EOF
           ls -lh \
             target/release/macrdp
 
-
       # =========================================================
       # 10. INSTALL MACRDP
       # =========================================================
@@ -444,7 +429,6 @@ EOF
 
           /usr/local/bin/macrdp --help
 
-
       # =========================================================
       # 11. PREPARE MACRDP LOG
       # =========================================================
@@ -460,7 +444,6 @@ EOF
           rm -rf /tmp/macrdp
 
           mkdir -p /tmp/macrdp
-
 
       # =========================================================
       # 12. START MACRDP
@@ -548,7 +531,6 @@ EOF
             exit 1
           fi
 
-
       # =========================================================
       # 13. VERIFY GUI + ADMIN USER
       # =========================================================
@@ -628,9 +610,8 @@ EOF
           echo "IMPORTANT:"
           echo "Do NOT use Switch User."
 
-
       # =========================================================
-      # 14. KEEP RDP ALIVE
+      # 14. KEEP RUNNER GUI ALIVE
       # =========================================================
       - name: Keep RDP Alive
         shell: bash
@@ -694,7 +675,6 @@ EOF
             sleep 30
 
           done
-
 
       # =========================================================
       # 15. FINAL DIAGNOSTIC
@@ -785,7 +765,6 @@ EOF
             /tmp/tailscaled.log \
             2>/dev/null || true
 
-
       # =========================================================
       # 16. CLEANUP + TELEGRAM OFFLINE + AUTO RESTART
       # =========================================================
@@ -813,7 +792,6 @@ EOF
             TAILSCALE_IP=$(cat /tmp/tailscale_ip)
           fi
 
-
           # =====================================================
           # TELEGRAM OFFLINE UPDATE
           # =====================================================
@@ -838,10 +816,7 @@ EOF
 
 ⛔ <b>Status:</b> Runner stopped"
 
-              REPLY_MARKUP=$(cat <<EOF
-{"inline_keyboard":[[{"text":"📋 Copy IP","copy_text":{"text":"${TAILSCALE_IP}"}},{"text":"📋 Copy RDP","copy_text":{"text":"${TAILSCALE_IP}:3390"}}]]}
-EOF
-              )
+              REPLY_MARKUP="{\"inline_keyboard\":[[{\"text\":\"📋 Copy IP\",\"copy_text\":{\"text\":\"${TAILSCALE_IP}\"}},{\"text\":\"📋 Copy RDP\",\"copy_text\":{\"text\":\"${TAILSCALE_IP}:3390\"}}]]}"
 
             else
 
@@ -849,10 +824,9 @@ EOF
 
 ⛔ <b>Status:</b> Runner stopped"
 
-              REPLY_MARKUP='{"inline_keyboard":[]}'
+              REPLY_MARKUP="{\"inline_keyboard\":[]}"
 
             fi
-
 
             TELEGRAM_UPDATE_RESPONSE=$(
               curl -sS \
@@ -877,7 +851,6 @@ EOF
 
           fi
 
-
           # =====================================================
           # STOP MACRDP
           # =====================================================
@@ -893,14 +866,12 @@ EOF
 
           pkill -f macrdp || true
 
-
           # =====================================================
           # STOP TAILSCALE
           # =====================================================
 
           sudo tailscale down \
             2>/dev/null || true
-
 
           # =====================================================
           # AUTO RESTART
@@ -912,7 +883,7 @@ EOF
           echo "=================================================="
 
           echo
-          echo "Waiting 15 seconds before starting next runner..."
+          echo "Waiting 15 seconds..."
 
           sleep 15
 
@@ -930,11 +901,9 @@ EOF
           echo "$RESTART_EXIT"
 
           if [ "$RESTART_EXIT" -eq 0 ]; then
-            echo
-            echo "Next macOS RDP runner has been requested."
+            echo "Next workflow run requested successfully."
           else
-            echo
-            echo "WARNING: Failed to start next workflow."
+            echo "WARNING: Failed to start next workflow run."
           fi
 
           echo
