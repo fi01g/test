@@ -217,14 +217,12 @@ jobs:
           tailscale version
 
       # =========================================================
-      # 6. START TAILSCALE + TELEGRAM ONLINE
+      # 6. START TAILSCALE
       # =========================================================
       - name: Start Tailscale
         shell: bash
         env:
           TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           set -e
 
@@ -276,61 +274,6 @@ jobs:
           echo
           echo "RDP ADDRESS:"
           echo "$TAILSCALE_IP:3390"
-
-          # =====================================================
-          # TELEGRAM ONLINE MESSAGE
-          # =====================================================
-
-          echo
-          echo "===== TELEGRAM ONLINE ====="
-
-          TELEGRAM_TEXT="🟢 <b>macOS RDP ONLINE</b>
-
-🖥 <b>System:</b> macOS
-🌐 <b>Tailscale IP:</b> <code>${TAILSCALE_IP}</code>
-🔌 <b>RDP Port:</b> <code>3390</code>
-
-📡 <b>RDP Address:</b>
-<code>${TAILSCALE_IP}:3390</code>
-
-⚡ <b>Status:</b> Online"
-
-          REPLY_MARKUP="{\"inline_keyboard\":[[{\"text\":\"📋 Copy IP\",\"copy_text\":{\"text\":\"${TAILSCALE_IP}\"}},{\"text\":\"📋 Copy RDP\",\"copy_text\":{\"text\":\"${TAILSCALE_IP}:3390\"}}]]}"
-
-          TELEGRAM_RESPONSE=$(
-            curl -sS \
-              --fail \
-              --request POST \
-              "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-              --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
-              --data-urlencode "text=${TELEGRAM_TEXT}" \
-              --data-urlencode "parse_mode=HTML" \
-              --data-urlencode "reply_markup=${REPLY_MARKUP}"
-          )
-
-          echo
-          echo "Telegram response:"
-          echo "$TELEGRAM_RESPONSE"
-
-          TELEGRAM_MESSAGE_ID=$(
-            echo "$TELEGRAM_RESPONSE" |
-            sed -nE 's/.*"message_id":([0-9]+).*/\1/p' |
-            head -n 1
-          )
-
-          if [ -z "$TELEGRAM_MESSAGE_ID" ]; then
-            echo "ERROR: Could not get Telegram message ID."
-            exit 1
-          fi
-
-          echo "$TELEGRAM_MESSAGE_ID" > /tmp/telegram_message_id
-
-          echo
-          echo "Telegram message ID:"
-          echo "$TELEGRAM_MESSAGE_ID"
-
-          echo
-          echo "Telegram notification sent successfully."
 
       # =========================================================
       # 7. INSTALL RUST
@@ -532,7 +475,101 @@ jobs:
           fi
 
       # =========================================================
-      # 13. VERIFY GUI + ADMIN USER
+      # 13. SEND TELEGRAM ONLINE
+      # =========================================================
+      - name: Send Telegram RDP Online
+        shell: bash
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+        run: |
+          set -e
+
+          echo "=================================================="
+          echo "SEND TELEGRAM ONLINE"
+          echo "=================================================="
+
+          IP=$(cat /tmp/tailscale_ip)
+
+          if [ -z "$IP" ]; then
+            echo "ERROR: Tailscale IP not found."
+            exit 1
+          fi
+
+          REPLY_MARKUP=$(python3 - "$IP" <<'PY'
+          import json
+          import sys
+
+          ip = sys.argv[1]
+
+          data = {
+              "inline_keyboard": [
+                  [
+                      {
+                          "text": "📋 Copy IP",
+                          "copy_text": {
+                              "text": ip
+                          }
+                      },
+                      {
+                          "text": "📋 Copy RDP",
+                          "copy_text": {
+                              "text": f"{ip}:3390"
+                          }
+                      }
+                  ]
+              ]
+          }
+
+          print(json.dumps(data, ensure_ascii=False))
+          PY
+          )
+
+          TELEGRAM_TEXT=$(cat <<EOF
+          🟢 macOS RDP READY
+
+          IP: $IP
+          RDP: $IP:3390
+          Host: github-macos-rdp
+
+          Status: ONLINE
+          EOF
+          )
+
+          RESPONSE=$(
+            curl -fsS \
+              -X POST \
+              "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${CHAT_ID}" \
+              --data-urlencode "text=${TELEGRAM_TEXT}" \
+              --data-urlencode "reply_markup=${REPLY_MARKUP}"
+          )
+
+          echo "$RESPONSE"
+
+          MSG_ID=$(
+            python3 - "$RESPONSE" <<'PY'
+          import json
+          import sys
+
+          response = json.loads(sys.argv[1])
+
+          if not response.get("ok"):
+              raise SystemExit("Telegram API returned an error.")
+
+          print(response["result"]["message_id"])
+          PY
+          )
+
+          echo "$MSG_ID" > /tmp/telegram_message_id
+
+          echo
+          echo "Telegram message ID:"
+          echo "$MSG_ID"
+
+      # =========================================================
+      # 14. VERIFY GUI + ADMIN USER
       # =========================================================
       - name: Verify GUI And Administrator
         shell: bash
@@ -611,7 +648,7 @@ jobs:
           echo "Do NOT use Switch User."
 
       # =========================================================
-      # 14. KEEP RUNNER GUI ALIVE
+      # 15. KEEP RUNNER GUI ALIVE
       # =========================================================
       - name: Keep RDP Alive
         shell: bash
@@ -677,7 +714,7 @@ jobs:
           done
 
       # =========================================================
-      # 15. FINAL DIAGNOSTIC
+      # 16. FINAL DIAGNOSTIC
       # =========================================================
       - name: Final Diagnostic
         if: always()
@@ -766,15 +803,14 @@ jobs:
             2>/dev/null || true
 
       # =========================================================
-      # 16. CLEANUP + TELEGRAM OFFLINE + AUTO RESTART
+      # 17. CLEANUP + TELEGRAM OFFLINE
       # =========================================================
-      - name: Cleanup And Restart
+      - name: Cleanup
         if: always()
         shell: bash
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GH_TOKEN: ${{ github.token }}
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           set +e
 
@@ -782,67 +818,58 @@ jobs:
           echo "CLEANUP"
           echo "=================================================="
 
-          # =====================================================
-          # READ TAILSCALE IP
-          # =====================================================
-
-          TAILSCALE_IP=""
+          IP=""
 
           if [ -f /tmp/tailscale_ip ]; then
-            TAILSCALE_IP=$(cat /tmp/tailscale_ip)
+            IP=$(cat /tmp/tailscale_ip)
           fi
 
-          # =====================================================
-          # TELEGRAM OFFLINE UPDATE
-          # =====================================================
+          MSG_ID=""
 
           if [ -f /tmp/telegram_message_id ]; then
+            MSG_ID=$(cat /tmp/telegram_message_id)
+          fi
 
-            TELEGRAM_MESSAGE_ID=$(cat /tmp/telegram_message_id)
+          echo
+          echo "Tailscale IP:"
+          echo "$IP"
 
-            echo
-            echo "===== TELEGRAM OFFLINE UPDATE ====="
+          echo
+          echo "Telegram Message ID:"
+          echo "$MSG_ID"
 
-            if [ -n "$TAILSCALE_IP" ]; then
+          # =====================================================
+          # EDIT OLD TELEGRAM MESSAGE
+          # =====================================================
 
-              OFFLINE_TEXT="🔴 <b>macOS RDP OFFLINE</b>
-
-🖥 <b>System:</b> macOS
-🌐 <b>Last Tailscale IP:</b> <code>${TAILSCALE_IP}</code>
-🔌 <b>RDP Port:</b> <code>3390</code>
-
-📡 <b>Last RDP Address:</b>
-<code>${TAILSCALE_IP}:3390</code>
-
-⛔ <b>Status:</b> Runner stopped"
-
-              REPLY_MARKUP="{\"inline_keyboard\":[[{\"text\":\"📋 Copy IP\",\"copy_text\":{\"text\":\"${TAILSCALE_IP}\"}},{\"text\":\"📋 Copy RDP\",\"copy_text\":{\"text\":\"${TAILSCALE_IP}:3390\"}}]]}"
-
-            else
-
-              OFFLINE_TEXT="🔴 <b>macOS RDP OFFLINE</b>
-
-⛔ <b>Status:</b> Runner stopped"
-
-              REPLY_MARKUP="{\"inline_keyboard\":[]}"
-
-            fi
-
-            TELEGRAM_UPDATE_RESPONSE=$(
-              curl -sS \
-                --fail \
-                --request POST \
-                "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/editMessageText" \
-                --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
-                --data-urlencode "message_id=${TELEGRAM_MESSAGE_ID}" \
-                --data-urlencode "text=${OFFLINE_TEXT}" \
-                --data-urlencode "parse_mode=HTML" \
-                --data-urlencode "reply_markup=${REPLY_MARKUP}"
-            )
+          if [ -n "$MSG_ID" ]; then
 
             echo
-            echo "Telegram update response:"
-            echo "$TELEGRAM_UPDATE_RESPONSE"
+            echo "Editing Telegram message..."
+
+            OFFLINE_TEXT=$(cat <<EOF
+          🔴 macOS RDP OFFLINE
+
+          IP: $IP
+          RDP: $IP:3390
+
+          Status: OFFLINE
+          Runner stopped.
+
+          🔄 Starting a new server...
+          EOF
+          )
+
+            curl -fsS \
+              -X POST \
+              "https://api.telegram.org/bot${BOT_TOKEN}/editMessageText" \
+              --data-urlencode "chat_id=${CHAT_ID}" \
+              --data-urlencode "message_id=${MSG_ID}" \
+              --data-urlencode "text=${OFFLINE_TEXT}" \
+              || true
+
+            echo
+            echo "Old Telegram message updated."
 
           else
 
@@ -859,52 +886,74 @@ jobs:
 
             PID=$(cat /tmp/macrdp.pid)
 
+            echo
+            echo "Stopping macrdp PID:"
+            echo "$PID"
+
             kill "$PID" \
               2>/dev/null || true
 
           fi
 
-          pkill -f macrdp || true
+          pkill -f macrdp \
+            2>/dev/null || true
 
           # =====================================================
           # STOP TAILSCALE
           # =====================================================
 
+          echo
+          echo "Stopping Tailscale..."
+
           sudo tailscale down \
             2>/dev/null || true
 
-          # =====================================================
-          # AUTO RESTART
-          # =====================================================
-
-          echo
-          echo "=================================================="
-          echo "AUTO RESTART"
-          echo "=================================================="
-
-          echo
-          echo "Waiting 15 seconds..."
-
-          sleep 15
-
-          echo
-          echo "Starting next workflow run..."
-
-          gh workflow run \
-            "${{ github.workflow }}" \
-            --ref "${{ github.ref_name }}"
-
-          RESTART_EXIT=$?
-
-          echo
-          echo "Restart command exit:"
-          echo "$RESTART_EXIT"
-
-          if [ "$RESTART_EXIT" -eq 0 ]; then
-            echo "Next workflow run requested successfully."
-          else
-            echo "WARNING: Failed to start next workflow run."
-          fi
-
           echo
           echo "Cleanup complete."
+
+      # =========================================================
+      # 18. TRIGGER NEXT RUN
+      # =========================================================
+      - name: Trigger Next Run
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+
+          echo "=================================================="
+          echo "TRIGGER NEXT macOS RUN"
+          echo "=================================================="
+
+          echo
+          echo "Repository:"
+          echo "$GITHUB_REPOSITORY"
+
+          echo
+          echo "Branch:"
+          echo "$GITHUB_REF_NAME"
+
+          curl -fsS \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/rustdesk-macos.yml/dispatches" \
+            -d "{\"ref\":\"${GITHUB_REF_NAME}\"}"
+
+          RESULT=$?
+
+          echo
+          echo "Trigger result:"
+          echo "$RESULT"
+
+          if [ "$RESULT" -eq 0 ]; then
+            echo
+            echo "Next macOS run triggered successfully."
+          else
+            echo
+            echo "Failed to trigger next run."
+          fi
+
+          exit 0
