@@ -78,7 +78,7 @@ jobs:
           id "$MACOS_USERNAME"
 
       # =========================================================
-      # 3. Administrator
+      # 3. Make User Administrator
       # =========================================================
       - name: Configure Administrator
         shell: bash
@@ -86,6 +86,8 @@ jobs:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
           set -e
+
+          echo "Adding user to admin group..."
 
           sudo dseditgroup \
             -o edit \
@@ -98,8 +100,13 @@ jobs:
 
           id "$MACOS_USERNAME"
 
+          echo
+          echo "===== ADMIN GROUP ====="
+
+          dscl . -read /Groups/admin GroupMembership
+
       # =========================================================
-      # 4. Auto Login
+      # 4. Configure Auto Login
       # =========================================================
       - name: Configure Auto Login
         shell: bash
@@ -107,6 +114,8 @@ jobs:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
           set +e
+
+          echo "Configuring automatic login..."
 
           sudo defaults write \
             /Library/Preferences/com.apple.loginwindow \
@@ -123,6 +132,7 @@ jobs:
 
           echo
           echo "Current console user:"
+
           stat -f "%Su" /dev/console
 
       # =========================================================
@@ -173,8 +183,11 @@ jobs:
           echo "=================================================="
 
           if pgrep -x tailscaled >/dev/null 2>&1; then
-            echo "tailscaled already running."
+
+            echo "tailscaled is already running."
+
           else
+
             echo "Starting tailscaled..."
 
             sudo tailscaled \
@@ -186,6 +199,7 @@ jobs:
             echo "tailscaled PID: $TAILSCALED_PID"
 
             sleep 5
+
           fi
 
           echo
@@ -196,7 +210,9 @@ jobs:
           echo
           echo "===== TAILSCALED LOG ====="
 
-          cat /tmp/tailscaled.log 2>/dev/null || true
+          cat \
+            /tmp/tailscaled.log \
+            2>/dev/null || true
 
           echo
           echo "===== TAILSCALE UP ====="
@@ -220,6 +236,7 @@ jobs:
 
           if [ -z "$TAILSCALE_IP" ]; then
             echo "ERROR: Tailscale IP not found."
+
             exit 1
           fi
 
@@ -236,8 +253,11 @@ jobs:
           set -e
 
           if command -v rustc >/dev/null 2>&1; then
+
             echo "Rust already installed."
+
           else
+
             echo "Installing Rust..."
 
             curl \
@@ -245,11 +265,14 @@ jobs:
               --tlsv1.2 \
               -sSf https://sh.rustup.rs \
               | sh -s -- -y
+
           fi
 
           source "$HOME/.cargo/env"
 
           echo
+          echo "===== RUST ====="
+
           rustc --version
 
           echo
@@ -288,6 +311,7 @@ jobs:
 
           cd "$HOME/macrdp"
 
+          echo
           echo "===== CARGO BUILD ====="
 
           cargo build --release
@@ -295,7 +319,8 @@ jobs:
           echo
           echo "===== BUILD OUTPUT ====="
 
-          find target/release \
+          find \
+            target/release \
             -maxdepth 1 \
             -type f \
             -perm -111 \
@@ -312,8 +337,11 @@ jobs:
           MACRDP_BINARY="$HOME/macrdp/target/release/macrdp"
 
           if [ ! -f "$MACRDP_BINARY" ]; then
+
             echo "ERROR: macrdp binary not found."
+
             exit 1
+
           fi
 
           sudo cp \
@@ -324,12 +352,17 @@ jobs:
             /usr/local/bin/macrdp
 
           echo
+          echo "===== MACRDP BINARY ====="
+
+          ls -lh /usr/local/bin/macrdp
+
+          echo
           echo "===== MACRDP HELP ====="
 
           /usr/local/bin/macrdp --help
 
       # =========================================================
-      # 11. Prepare logs
+      # 11. Prepare macrdp Logs
       # =========================================================
       - name: Prepare macrdp Logs
         shell: bash
@@ -340,11 +373,13 @@ jobs:
 
           mkdir -p /tmp/macrdp-logs
 
-          echo "macrdp log directory:"
+          echo
+          echo "===== LOG DIRECTORY ====="
+
           ls -ld /tmp/macrdp-logs
 
       # =========================================================
-      # 12. Check TCC / GUI Environment
+      # 12. Check GUI Environment
       # =========================================================
       - name: Check GUI Environment
         shell: bash
@@ -357,39 +392,50 @@ jobs:
 
           echo
           echo "Current user:"
+
           whoami
 
           echo
           echo "Console user:"
+
           stat -f "%Su" /dev/console
 
           echo
-          echo "DISPLAY:"
-          echo "${DISPLAY:-<empty>}"
-
-          echo
           echo "USER:"
+
           echo "$USER"
 
           echo
           echo "HOME:"
+
           echo "$HOME"
 
           echo
+          echo "DISPLAY:"
+
+          echo "${DISPLAY:-<empty>}"
+
+          echo
           echo "GUI sessions:"
+
           who || true
 
           echo
           echo "WindowServer:"
+
           pgrep -fl WindowServer || true
 
       # =========================================================
       # 13. Start macrdp
       #
       # IMPORTANT:
-      # Run it in the current GitHub runner GUI session.
       #
-      # virtual-display creates a headless RDP display.
+      # --virtual-display requires both:
+      #
+      # --width
+      # --height
+      #
+      # We use 1920x1080.
       # =========================================================
       - name: Start macrdp
         shell: bash
@@ -407,6 +453,7 @@ jobs:
 
           echo
           echo "Binary:"
+
           ls -l "$MACRDP"
 
           echo
@@ -422,6 +469,8 @@ jobs:
             --keyframe-interval 2 \
             --flush-frames 4 \
             --virtual-display \
+            --width 1920 \
+            --height 1080 \
             --log-dir /tmp/macrdp-logs \
             --verbose \
             > /tmp/macrdp-logs/console.log 2>&1 &
@@ -432,23 +481,30 @@ jobs:
 
           echo
           echo "macrdp PID:"
+
           echo "$MACRDP_PID"
 
           echo
           echo "Waiting for macrdp..."
 
+          PORT_FOUND=0
+
           for i in $(seq 1 30); do
 
             if ! kill -0 "$MACRDP_PID" 2>/dev/null; then
+
               echo
               echo "ERROR: macrdp exited."
 
               echo
               echo "===== CONSOLE LOG ====="
 
-              cat /tmp/macrdp-logs/console.log 2>/dev/null || true
+              cat \
+                /tmp/macrdp-logs/console.log \
+                2>/dev/null || true
 
               exit 1
+
             fi
 
             if lsof \
@@ -458,12 +514,15 @@ jobs:
               >/tmp/macrdp-port.txt \
               2>&1; then
 
+              PORT_FOUND=1
+
               echo
               echo "RDP PORT IS LISTENING."
 
               cat /tmp/macrdp-port.txt
 
               break
+
             fi
 
             echo "Waiting... $i/30"
@@ -486,23 +545,34 @@ jobs:
             -sTCP:LISTEN \
             2>&1 || true
 
+          if [ "$PORT_FOUND" -ne 1 ]; then
+
+            echo
+            echo "WARNING:"
+            echo "macrdp process is running but port 3390"
+            echo "was not detected as listening."
+
+          fi
+
           echo
           echo "===== MACRDP LOG ====="
 
-          cat /tmp/macrdp-logs/console.log \
+          cat \
+            /tmp/macrdp-logs/console.log \
             2>/dev/null || true
 
           echo
           echo "===== LOG FILES ====="
 
-          find /tmp/macrdp-logs \
+          find \
+            /tmp/macrdp-logs \
             -maxdepth 2 \
             -type f \
             -print \
             2>/dev/null || true
 
       # =========================================================
-      # 14. Local RDP TCP Test
+      # 14. Test Local RDP
       # =========================================================
       - name: Test Local RDP
         shell: bash
@@ -525,7 +595,8 @@ jobs:
           echo
           echo "===== TEST 127.0.0.1:3390 ====="
 
-          nc -vz \
+          nc \
+            -vz \
             127.0.0.1 \
             3390 \
             2>&1
@@ -533,7 +604,7 @@ jobs:
           LOCAL_EXIT=$?
 
           echo
-          echo "nc exit code:"
+          echo "Local nc exit code:"
           echo "$LOCAL_EXIT"
 
           echo
@@ -541,10 +612,12 @@ jobs:
 
           TAILSCALE_IP=$(cat /tmp/tailscale_ip 2>/dev/null)
 
+          echo
           echo "Testing:"
           echo "$TAILSCALE_IP:3390"
 
-          nc -vz \
+          nc \
+            -vz \
             "$TAILSCALE_IP" \
             3390 \
             2>&1
@@ -556,18 +629,28 @@ jobs:
           echo "$TS_EXIT"
 
           echo
-          echo "===== RESULT ====="
+          echo "=================================================="
+          echo "RDP TCP RESULT"
+          echo "=================================================="
 
           if [ "$LOCAL_EXIT" -eq 0 ]; then
+
             echo "LOCAL RDP TCP: PASS"
+
           else
+
             echo "LOCAL RDP TCP: FAIL"
+
           fi
 
           if [ "$TS_EXIT" -eq 0 ]; then
+
             echo "TAILSCALE RDP TCP: PASS"
+
           else
+
             echo "TAILSCALE RDP TCP: FAIL"
+
           fi
 
       # =========================================================
@@ -615,6 +698,13 @@ jobs:
               "utun" \
             || true
 
+          echo
+          echo "===== TAILSCALED LOG ====="
+
+          cat \
+            /tmp/tailscaled.log \
+            2>/dev/null || true
+
       # =========================================================
       # 16. Final RDP Diagnostic
       # =========================================================
@@ -655,7 +745,8 @@ jobs:
           echo
           echo "===== TAILSCALE IP ====="
 
-          cat /tmp/tailscale_ip \
+          cat \
+            /tmp/tailscale_ip \
             2>/dev/null || true
 
           echo
@@ -673,7 +764,9 @@ jobs:
             -type f \
             -maxdepth 2 \
             -print \
-            -exec sh -c 'echo "----- $1 -----"; cat "$1"' _ {} \; \
+            -exec sh -c \
+              'echo "----- $1 -----"; cat "$1"' \
+              _ {} \; \
             2>/dev/null || true
 
           echo
@@ -703,6 +796,10 @@ jobs:
           echo "${{ secrets.MACOS_USERNAME }}"
 
           echo
+          echo "RDP DISPLAY:"
+          echo "1920x1080"
+
+          echo
           echo "=================================================="
 
           END=$((SECONDS + 20400))
@@ -710,8 +807,11 @@ jobs:
           while [ "$SECONDS" -lt "$END" ]; do
 
             echo
-            echo "===== STATUS ====="
+            echo "=================================================="
+            echo "STATUS"
+            echo "=================================================="
 
+            echo
             echo "Time remaining:"
             echo "$((END - SECONDS)) seconds"
 
@@ -721,7 +821,7 @@ jobs:
             pgrep -fl macrdp || true
 
             echo
-            echo "Port:"
+            echo "Port 3390:"
 
             lsof \
               -nP \
@@ -748,14 +848,20 @@ jobs:
         run: |
           set +e
 
-          echo "===== CLEANUP ====="
+          echo "=================================================="
+          echo "CLEANUP"
+          echo "=================================================="
 
           if [ -f /tmp/macrdp.pid ]; then
+
             MACRDP_PID=$(cat /tmp/macrdp.pid)
 
             echo "Stopping macrdp PID: $MACRDP_PID"
 
-            kill "$MACRDP_PID" 2>/dev/null || true
+            kill \
+              "$MACRDP_PID" \
+              2>/dev/null || true
+
           fi
 
           pkill -f macrdp || true
@@ -763,7 +869,8 @@ jobs:
           echo
           echo "Stopping Tailscale..."
 
-          sudo tailscale down 2>/dev/null || true
+          sudo tailscale down \
+            2>/dev/null || true
 
           echo
           echo "Cleanup complete."
