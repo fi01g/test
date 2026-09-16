@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
   macos:
@@ -48,6 +49,7 @@ jobs:
           echo
           echo "===== LOGINWINDOW ====="
           pgrep -fl loginwindow || true
+
 
       # =========================================================
       # 2. CREATE / VERIFY ADMIN USER
@@ -93,6 +95,7 @@ jobs:
 
           echo "$TARGET_UID"
 
+
       # =========================================================
       # 3. ADMIN GROUP
       # =========================================================
@@ -125,6 +128,7 @@ jobs:
             -o checkmember \
             -m "$MACOS_USERNAME" \
             admin
+
 
       # =========================================================
       # 4. VERIFY ADMINISTRATION
@@ -183,8 +187,9 @@ jobs:
             -U "$MACOS_USERNAME" \
             2>&1 || true
 
+
       # =========================================================
-      # 5. PREPARE TAILSCALE
+      # 5. INSTALL TAILSCALE
       # =========================================================
       - name: Install Tailscale
         shell: bash
@@ -215,13 +220,16 @@ jobs:
 
           tailscale version
 
+
       # =========================================================
-      # 6. START TAILSCALE
+      # 6. START TAILSCALE + TELEGRAM ONLINE
       # =========================================================
       - name: Start Tailscale
         shell: bash
         env:
           TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           set -e
 
@@ -234,6 +242,7 @@ jobs:
           if pgrep -x tailscaled >/dev/null 2>&1; then
             echo "tailscaled already running."
           else
+
             sudo tailscaled \
               --state=/tmp/tailscale-state \
               > /tmp/tailscaled.log 2>&1 &
@@ -241,6 +250,7 @@ jobs:
             echo "tailscaled PID: $!"
 
             sleep 5
+
           fi
 
           echo
@@ -274,6 +284,66 @@ jobs:
           echo "RDP ADDRESS:"
           echo "$TAILSCALE_IP:3390"
 
+
+          # =====================================================
+          # TELEGRAM ONLINE MESSAGE
+          # =====================================================
+
+          echo
+          echo "===== TELEGRAM ONLINE ====="
+
+          TELEGRAM_TEXT="🟢 <b>macOS RDP ONLINE</b>
+
+🖥 <b>System:</b> macOS
+🌐 <b>Tailscale IP:</b> <code>${TAILSCALE_IP}</code>
+🔌 <b>RDP Port:</b> <code>3390</code>
+
+📡 <b>RDP Address:</b>
+<code>${TAILSCALE_IP}:3390</code>
+
+⚡ <b>Status:</b> Online"
+
+          REPLY_MARKUP=$(cat <<EOF
+{"inline_keyboard":[[{"text":"📋 Copy IP","copy_text":{"text":"${TAILSCALE_IP}"}},{"text":"📋 Copy RDP","copy_text":{"text":"${TAILSCALE_IP}:3390"}}]]}
+EOF
+          )
+
+          TELEGRAM_RESPONSE=$(
+            curl -sS \
+              --fail \
+              --request POST \
+              "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+              --data-urlencode "text=${TELEGRAM_TEXT}" \
+              --data-urlencode "parse_mode=HTML" \
+              --data-urlencode "reply_markup=${REPLY_MARKUP}"
+          )
+
+          echo
+          echo "Telegram response:"
+          echo "$TELEGRAM_RESPONSE"
+
+          TELEGRAM_MESSAGE_ID=$(
+            echo "$TELEGRAM_RESPONSE" |
+            sed -nE 's/.*"message_id":([0-9]+).*/\1/p' |
+            head -n 1
+          )
+
+          if [ -z "$TELEGRAM_MESSAGE_ID" ]; then
+            echo "ERROR: Could not get Telegram message ID."
+            exit 1
+          fi
+
+          echo "$TELEGRAM_MESSAGE_ID" > /tmp/telegram_message_id
+
+          echo
+          echo "Telegram message ID:"
+          echo "$TELEGRAM_MESSAGE_ID"
+
+          echo
+          echo "Telegram notification sent successfully."
+
+
       # =========================================================
       # 7. INSTALL RUST
       # =========================================================
@@ -301,6 +371,7 @@ jobs:
           rustc --version
           cargo --version
 
+
       # =========================================================
       # 8. CLONE MACRDP
       # =========================================================
@@ -322,6 +393,7 @@ jobs:
           cd "$HOME/macrdp"
 
           git status
+
 
       # =========================================================
       # 9. BUILD MACRDP
@@ -347,6 +419,7 @@ jobs:
           ls -lh \
             target/release/macrdp
 
+
       # =========================================================
       # 10. INSTALL MACRDP
       # =========================================================
@@ -371,6 +444,7 @@ jobs:
 
           /usr/local/bin/macrdp --help
 
+
       # =========================================================
       # 11. PREPARE MACRDP LOG
       # =========================================================
@@ -386,6 +460,7 @@ jobs:
           rm -rf /tmp/macrdp
 
           mkdir -p /tmp/macrdp
+
 
       # =========================================================
       # 12. START MACRDP
@@ -473,6 +548,7 @@ jobs:
             exit 1
           fi
 
+
       # =========================================================
       # 13. VERIFY GUI + ADMIN USER
       # =========================================================
@@ -552,8 +628,9 @@ jobs:
           echo "IMPORTANT:"
           echo "Do NOT use Switch User."
 
+
       # =========================================================
-      # 14. KEEP RUNNER GUI ALIVE
+      # 14. KEEP RDP ALIVE
       # =========================================================
       - name: Keep RDP Alive
         shell: bash
@@ -617,6 +694,7 @@ jobs:
             sleep 30
 
           done
+
 
       # =========================================================
       # 15. FINAL DIAGNOSTIC
@@ -707,18 +785,102 @@ jobs:
             /tmp/tailscaled.log \
             2>/dev/null || true
 
+
       # =========================================================
-      # 16. CLEANUP
+      # 16. CLEANUP + TELEGRAM OFFLINE + AUTO RESTART
       # =========================================================
-      - name: Cleanup
+      - name: Cleanup And Restart
         if: always()
         shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set +e
 
           echo "=================================================="
           echo "CLEANUP"
           echo "=================================================="
+
+          # =====================================================
+          # READ TAILSCALE IP
+          # =====================================================
+
+          TAILSCALE_IP=""
+
+          if [ -f /tmp/tailscale_ip ]; then
+            TAILSCALE_IP=$(cat /tmp/tailscale_ip)
+          fi
+
+
+          # =====================================================
+          # TELEGRAM OFFLINE UPDATE
+          # =====================================================
+
+          if [ -f /tmp/telegram_message_id ]; then
+
+            TELEGRAM_MESSAGE_ID=$(cat /tmp/telegram_message_id)
+
+            echo
+            echo "===== TELEGRAM OFFLINE UPDATE ====="
+
+            if [ -n "$TAILSCALE_IP" ]; then
+
+              OFFLINE_TEXT="🔴 <b>macOS RDP OFFLINE</b>
+
+🖥 <b>System:</b> macOS
+🌐 <b>Last Tailscale IP:</b> <code>${TAILSCALE_IP}</code>
+🔌 <b>RDP Port:</b> <code>3390</code>
+
+📡 <b>Last RDP Address:</b>
+<code>${TAILSCALE_IP}:3390</code>
+
+⛔ <b>Status:</b> Runner stopped"
+
+              REPLY_MARKUP=$(cat <<EOF
+{"inline_keyboard":[[{"text":"📋 Copy IP","copy_text":{"text":"${TAILSCALE_IP}"}},{"text":"📋 Copy RDP","copy_text":{"text":"${TAILSCALE_IP}:3390"}}]]}
+EOF
+              )
+
+            else
+
+              OFFLINE_TEXT="🔴 <b>macOS RDP OFFLINE</b>
+
+⛔ <b>Status:</b> Runner stopped"
+
+              REPLY_MARKUP='{"inline_keyboard":[]}'
+
+            fi
+
+
+            TELEGRAM_UPDATE_RESPONSE=$(
+              curl -sS \
+                --fail \
+                --request POST \
+                "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/editMessageText" \
+                --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+                --data-urlencode "message_id=${TELEGRAM_MESSAGE_ID}" \
+                --data-urlencode "text=${OFFLINE_TEXT}" \
+                --data-urlencode "parse_mode=HTML" \
+                --data-urlencode "reply_markup=${REPLY_MARKUP}"
+            )
+
+            echo
+            echo "Telegram update response:"
+            echo "$TELEGRAM_UPDATE_RESPONSE"
+
+          else
+
+            echo
+            echo "No Telegram message ID found."
+
+          fi
+
+
+          # =====================================================
+          # STOP MACRDP
+          # =====================================================
 
           if [ -f /tmp/macrdp.pid ]; then
 
@@ -731,8 +893,49 @@ jobs:
 
           pkill -f macrdp || true
 
+
+          # =====================================================
+          # STOP TAILSCALE
+          # =====================================================
+
           sudo tailscale down \
             2>/dev/null || true
+
+
+          # =====================================================
+          # AUTO RESTART
+          # =====================================================
+
+          echo
+          echo "=================================================="
+          echo "AUTO RESTART"
+          echo "=================================================="
+
+          echo
+          echo "Waiting 15 seconds before starting next runner..."
+
+          sleep 15
+
+          echo
+          echo "Starting next workflow run..."
+
+          gh workflow run \
+            "${{ github.workflow }}" \
+            --ref "${{ github.ref_name }}"
+
+          RESTART_EXIT=$?
+
+          echo
+          echo "Restart command exit:"
+          echo "$RESTART_EXIT"
+
+          if [ "$RESTART_EXIT" -eq 0 ]; then
+            echo
+            echo "Next macOS RDP runner has been requested."
+          else
+            echo
+            echo "WARNING: Failed to start next workflow."
+          fi
 
           echo
           echo "Cleanup complete."
