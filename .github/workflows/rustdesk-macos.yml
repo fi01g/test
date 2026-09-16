@@ -1,16 +1,15 @@
-name: macOS RDP - Abdulrahman
+name: macOS GUI Session Test - Abdulrahman
 
 on:
   workflow_dispatch:
 
 permissions:
-  actions: write
   contents: read
 
 jobs:
   macos:
     runs-on: macos-latest
-    timeout-minutes: 350
+    timeout-minutes: 20
 
     steps:
 
@@ -31,6 +30,10 @@ jobs:
           sw_vers
 
           echo
+          echo "===== KERNEL ====="
+          uname -a
+
+          echo
           echo "===== PROCESS USER ====="
           whoami
 
@@ -39,21 +42,25 @@ jobs:
           stat -f "%Su" /dev/console
 
           echo
+          echo "===== CONSOLE DEVICE ====="
+          stat -f "%Sp %Su %Sg %N" /dev/console
+
+          echo
           echo "===== LOGIN SESSIONS ====="
           who || true
 
           echo
-          echo "===== WINDOWSERVER ====="
-          pgrep -fl WindowServer || true
-
-          echo
-          echo "===== LOGINWINDOW ====="
+          echo "===== LOGIN WINDOW ====="
           pgrep -fl loginwindow || true
 
+          echo
+          echo "===== WINDOW SERVER ====="
+          pgrep -fl WindowServer || true
+
       # =========================================================
-      # 2. CREATE / VERIFY USER
+      # 2. CREATE TARGET USER
       # =========================================================
-      - name: Create macOS User
+      - name: Create Target User
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
@@ -62,12 +69,18 @@ jobs:
           set -e
 
           echo "=================================================="
-          echo "CREATE / VERIFY USER"
+          echo "CREATE TARGET USER"
           echo "=================================================="
 
+          echo
+          echo "Target username:"
+          echo "$MACOS_USERNAME"
+
           if id "$MACOS_USERNAME" >/dev/null 2>&1; then
+            echo
             echo "User already exists."
           else
+            echo
             echo "Creating user..."
 
             sudo sysadminctl \
@@ -75,28 +88,31 @@ jobs:
               -fullName "$MACOS_USERNAME" \
               -password "$MACOS_PASSWORD"
 
+            echo
             echo "User created."
           fi
 
           echo
-          echo "===== USER INFO ====="
+          echo "===== TARGET USER ====="
 
           id "$MACOS_USERNAME"
 
           echo
-          echo "===== UID ====="
+          echo "===== TARGET UID ====="
 
-          id -u "$MACOS_USERNAME"
+          TARGET_UID=$(id -u "$MACOS_USERNAME")
+
+          echo "$TARGET_UID"
 
           echo
-          echo "===== HOME ====="
+          echo "===== TARGET HOME ====="
 
           dscl . \
             -read "/Users/$MACOS_USERNAME" \
             NFSHomeDirectory
 
       # =========================================================
-      # 3. ADMINISTRATOR
+      # 3. CONFIGURE ADMIN
       # =========================================================
       - name: Configure Administrator
         shell: bash
@@ -116,7 +132,7 @@ jobs:
             admin
 
           echo
-          echo "===== USER ====="
+          echo "===== USER GROUPS ====="
 
           id "$MACOS_USERNAME"
 
@@ -128,7 +144,62 @@ jobs:
             GroupMembership
 
       # =========================================================
-      # 4. CONFIGURE AUTO LOGIN
+      # 4. USER RECORD DIAGNOSTICS
+      # =========================================================
+      - name: Target User Diagnostics
+        shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+        run: |
+          set +e
+
+          echo "=================================================="
+          echo "TARGET USER DIAGNOSTICS"
+          echo "=================================================="
+
+          TARGET_UID=$(id -u "$MACOS_USERNAME")
+
+          echo
+          echo "Username:"
+          echo "$MACOS_USERNAME"
+
+          echo
+          echo "UID:"
+          echo "$TARGET_UID"
+
+          echo
+          echo "===== DSCL USER RECORD ====="
+
+          dscl . \
+            -read "/Users/$MACOS_USERNAME" \
+            2>&1 || true
+
+          echo
+          echo "===== AUTHORITY ====="
+
+          sudo dscl . \
+            -read "/Users/$MACOS_USERNAME" \
+            AuthenticationAuthority \
+            2>&1 || true
+
+          echo
+          echo "===== NFS HOME ====="
+
+          dscl . \
+            -read "/Users/$MACOS_USERNAME" \
+            NFSHomeDirectory \
+            2>&1 || true
+
+          echo
+          echo "===== USER SHELL ====="
+
+          dscl . \
+            -read "/Users/$MACOS_USERNAME" \
+            UserShell \
+            2>&1 || true
+
+      # =========================================================
+      # 5. AUTO LOGIN
       # =========================================================
       - name: Configure Auto Login
         shell: bash
@@ -147,336 +218,134 @@ jobs:
             "$MACOS_USERNAME"
 
           echo
-          echo "===== AUTO LOGIN CONFIG ====="
+          echo "===== AUTO LOGIN VALUE ====="
 
           sudo defaults read \
             /Library/Preferences/com.apple.loginwindow \
             autoLoginUser \
-            2>/dev/null || true
+            2>&1 || true
 
           echo
-          echo "NOTE:"
-          echo "Auto Login applies during startup."
-          echo "It does not switch the current GUI session."
+          echo "===== LOGINWINDOW PREFERENCES ====="
+
+          sudo defaults read \
+            /Library/Preferences/com.apple.loginwindow \
+            2>&1 || true
 
       # =========================================================
-      # 5. INSTALL TAILSCALE
+      # 6. GUI DOMAIN BEFORE ANY ACTION
       # =========================================================
-      - name: Install Tailscale
-        shell: bash
-        run: |
-          set -e
-
-          echo "=================================================="
-          echo "INSTALL TAILSCALE"
-          echo "=================================================="
-
-          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-
-          if command -v brew >/dev/null 2>&1; then
-            echo "Homebrew already installed."
-          else
-            echo "Installing Homebrew..."
-
-            NONINTERACTIVE=1 /bin/bash -c \
-              "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          fi
-
-          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-
-          brew install --quiet tailscale || true
-
-          echo
-          echo "===== TAILSCALE VERSION ====="
-
-          tailscale version
-
-      # =========================================================
-      # 6. START TAILSCALE
-      # =========================================================
-      - name: Start Tailscale
-        shell: bash
-        env:
-          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
-        run: |
-          set -e
-
-          echo "=================================================="
-          echo "START TAILSCALE"
-          echo "=================================================="
-
-          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-
-          if pgrep -x tailscaled >/dev/null 2>&1; then
-            echo "tailscaled already running."
-          else
-            echo "Starting tailscaled..."
-
-            sudo tailscaled \
-              --state=/tmp/tailscale-state \
-              > /tmp/tailscaled.log 2>&1 &
-
-            echo "tailscaled PID: $!"
-
-            sleep 5
-          fi
-
-          echo
-          echo "===== TAILSCALED ====="
-
-          pgrep -fl tailscaled || true
-
-          echo
-          echo "===== TAILSCALED LOG ====="
-
-          cat /tmp/tailscaled.log 2>/dev/null || true
-
-          echo
-          echo "===== TAILSCALE UP ====="
-
-          sudo tailscale up \
-            --authkey="$TAILSCALE_AUTH_KEY" \
-            --hostname="github-macos-rdp"
-
-          echo
-          echo "===== STATUS ====="
-
-          sudo tailscale status
-
-          echo
-          echo "===== IP ====="
-
-          TAILSCALE_IP=$(
-            sudo tailscale ip -4 2>/dev/null |
-            head -n 1
-          )
-
-          if [ -z "$TAILSCALE_IP" ]; then
-            echo "ERROR: No Tailscale IP."
-            exit 1
-          fi
-
-          echo "$TAILSCALE_IP" > /tmp/tailscale_ip
-
-          echo
-          echo "=================================================="
-          echo "RDP ADDRESS"
-          echo "=================================================="
-
-          echo "$TAILSCALE_IP:3390"
-
-      # =========================================================
-      # 7. INSTALL RUST
-      # =========================================================
-      - name: Install Rust
-        shell: bash
-        run: |
-          set -e
-
-          echo "=================================================="
-          echo "INSTALL RUST"
-          echo "=================================================="
-
-          if command -v rustc >/dev/null 2>&1; then
-            echo "Rust already installed."
-          else
-            curl \
-              --proto '=https' \
-              --tlsv1.2 \
-              -sSf https://sh.rustup.rs \
-              | sh -s -- -y
-          fi
-
-          source "$HOME/.cargo/env"
-
-          rustc --version
-          cargo --version
-
-      # =========================================================
-      # 8. CLONE MACRDP
-      # =========================================================
-      - name: Clone macrdp
-        shell: bash
-        run: |
-          set -e
-
-          echo "=================================================="
-          echo "CLONE MACRDP"
-          echo "=================================================="
-
-          rm -rf "$HOME/macrdp"
-
-          git clone \
-            https://github.com/clintcan/macrdp.git \
-            "$HOME/macrdp"
-
-          cd "$HOME/macrdp"
-
-          git status
-
-      # =========================================================
-      # 9. BUILD MACRDP
-      # =========================================================
-      - name: Build macrdp
-        shell: bash
-        run: |
-          set -e
-
-          echo "=================================================="
-          echo "BUILD MACRDP"
-          echo "=================================================="
-
-          source "$HOME/.cargo/env"
-
-          cd "$HOME/macrdp"
-
-          cargo build --release
-
-          echo
-          echo "===== BUILD OUTPUT ====="
-
-          ls -lh \
-            target/release/macrdp
-
-      # =========================================================
-      # 10. INSTALL MACRDP
-      # =========================================================
-      - name: Install macrdp
-        shell: bash
-        run: |
-          set -e
-
-          echo "=================================================="
-          echo "INSTALL MACRDP"
-          echo "=================================================="
-
-          sudo cp \
-            "$HOME/macrdp/target/release/macrdp" \
-            /usr/local/bin/macrdp
-
-          sudo chmod +x \
-            /usr/local/bin/macrdp
-
-          echo
-          echo "===== MACRDP VERSION / HELP ====="
-
-          /usr/local/bin/macrdp --help
-
-      # =========================================================
-      # 11. PREPARE LOG DIRECTORY
-      # =========================================================
-      - name: Prepare macrdp Logs
-        shell: bash
-        run: |
-          set -e
-
-          echo "=================================================="
-          echo "PREPARE MACRDP LOGS"
-          echo "=================================================="
-
-          rm -rf /tmp/macrdp
-
-          mkdir -p \
-            /tmp/macrdp
-
-      # =========================================================
-      # 12. START MACRDP
-      # =========================================================
-      - name: Start macrdp
+      - name: Check Target GUI Before Login
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
-          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
         run: |
           set +e
 
           echo "=================================================="
-          echo "START MACRDP"
+          echo "GUI DOMAIN BEFORE LOGIN"
           echo "=================================================="
 
-          /usr/local/bin/macrdp \
-            --bind 0.0.0.0:3390 \
-            --username "$MACOS_USERNAME" \
-            --password "$MACOS_PASSWORD" \
-            --enable-h264 \
-            --fps 60 \
-            --bitrate 8 \
-            --keyframe-interval 2 \
-            --flush-frames 4 \
-            --virtual-display \
-            --width 1920 \
-            --height 1080 \
-            --log-dir /tmp/macrdp \
-            --verbose \
-            > /tmp/macrdp/console.log 2>&1 &
-
-          PID=$!
-
-          echo "$PID" > /tmp/macrdp.pid
+          TARGET_UID=$(id -u "$MACOS_USERNAME")
 
           echo
-          echo "macrdp PID:"
-          echo "$PID"
+          echo "Target UID:"
+          echo "$TARGET_UID"
 
           echo
-          echo "Waiting for TCP 3390..."
+          echo "===== CURRENT CONSOLE ====="
 
-          READY=0
+          stat -f "%Su" /dev/console
 
-          for i in $(seq 1 30); do
+          echo
+          echo "===== WHO ====="
 
-            if ! kill -0 "$PID" 2>/dev/null; then
+          who || true
 
-              echo
-              echo "ERROR: macrdp exited."
+          echo
+          echo "===== GUI DOMAIN ====="
 
-              cat \
-                /tmp/macrdp/console.log \
-                2>/dev/null || true
+          sudo launchctl print \
+            "gui/$TARGET_UID" \
+            2>&1
 
-              exit 1
+          GUI_EXIT=$?
 
-            fi
+          echo
+          echo "GUI domain exit:"
+          echo "$GUI_EXIT"
 
-            if lsof \
-              -nP \
-              -iTCP:3390 \
-              -sTCP:LISTEN \
-              >/tmp/macrdp/port.txt \
-              2>&1; then
+          echo
+          echo "===== TARGET GUI SERVICE ====="
 
-              READY=1
-
-              echo
-              echo "TCP 3390 IS READY."
-
-              cat /tmp/macrdp/port.txt
-
-              break
-
-            fi
-
-            sleep 2
-
-          done
-
-          if [ "$READY" -ne 1 ]; then
-            echo
-            echo "ERROR: TCP 3390 did not open."
-            exit 1
-          fi
+          sudo launchctl print \
+            "gui/$TARGET_UID/com.apple.loginwindow" \
+            2>&1 || true
 
       # =========================================================
-      # 13. VERIFY RDP
+      # 7. LOGINWINDOW DIAGNOSTICS
       # =========================================================
-      - name: Verify RDP
+      - name: LoginWindow Diagnostics
         shell: bash
         run: |
           set +e
 
           echo "=================================================="
-          echo "VERIFY RDP"
+          echo "LOGINWINDOW DIAGNOSTICS"
           echo "=================================================="
+
+          echo
+          echo "===== LOGINWINDOW PROCESS ====="
+
+          pgrep -fl loginwindow || true
+
+          echo
+          echo "===== LOGINWINDOW PROCESS DETAILS ====="
+
+          ps auxww | grep -i \
+            "[l]oginwindow" || true
+
+          echo
+          echo "===== WINDOWSERVER PROCESS ====="
+
+          pgrep -fl WindowServer || true
+
+          echo
+          echo "===== WINDOWSERVER DETAILS ====="
+
+          ps auxww | grep -i \
+            "[W]indowServer" || true
+
+      # =========================================================
+      # 8. CHECK USER SESSION DATABASE
+      # =========================================================
+      - name: Check User Sessions
+        shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
+        run: |
+          set +e
+
+          echo "=================================================="
+          echo "CHECK USER SESSIONS"
+          echo "=================================================="
+
+          TARGET_UID=$(id -u "$MACOS_USERNAME")
+
+          echo
+          echo "===== WHO ====="
+
+          who || true
+
+          echo
+          echo "===== USERS ====="
+
+          users || true
+
+          echo
+          echo "===== LAST ====="
+
+          last -10 2>&1 || true
 
           echo
           echo "===== CONSOLE USER ====="
@@ -484,65 +353,22 @@ jobs:
           stat -f "%Su" /dev/console
 
           echo
-          echo "===== LOGIN SESSIONS ====="
+          echo "===== TARGET UID ====="
 
-          who || true
-
-          echo
-          echo "===== WINDOWSERVER ====="
-
-          pgrep -fl WindowServer || true
+          echo "$TARGET_UID"
 
           echo
-          echo "===== LOGINWINDOW ====="
+          echo "===== PROCESSES FOR TARGET UID ====="
 
-          pgrep -fl loginwindow || true
-
-          echo
-          echo "===== MACRDP ====="
-
-          pgrep -fl macrdp || true
-
-          echo
-          echo "===== PORT 3390 ====="
-
-          lsof \
-            -nP \
-            -iTCP:3390 \
-            -sTCP:LISTEN \
-            2>&1 || true
-
-          echo
-          echo "===== LOCAL TCP TEST ====="
-
-          nc \
-            -vz \
-            127.0.0.1 \
-            3390 \
-            2>&1
-
-          echo
-          echo "===== TAILSCALE IP ====="
-
-          cat /tmp/tailscale_ip
-
-          echo
-          echo "=================================================="
-          echo "CONNECT USING MICROSOFT REMOTE DESKTOP"
-          echo "=================================================="
-
-          echo
-          echo "PC:"
-          echo "$(cat /tmp/tailscale_ip):3390"
-
-          echo
-          echo "Username:"
-          echo "$MACOS_USERNAME"
+          ps -axo user,pid,ppid,stat,command \
+            | awk -v user="$MACOS_USERNAME" \
+              '$1 == user {print}' \
+            || true
 
       # =========================================================
-      # 14. KEEP RUNNER ALIVE
+      # 9. WAIT WITHOUT SWITCH USER
       # =========================================================
-      - name: Keep RDP Alive
+      - name: Wait For GUI Session
         shell: bash
         env:
           MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
@@ -550,80 +376,116 @@ jobs:
           set +e
 
           echo "=================================================="
-          echo "RDP SESSION ACTIVE"
+          echo "WAIT FOR GUI SESSION"
           echo "=================================================="
 
-          echo
-          echo "IMPORTANT:"
-          echo "Do NOT use Switch User."
-          echo "The active GUI session is runner."
+          TARGET_UID=$(id -u "$MACOS_USERNAME")
 
-          END=$((SECONDS + 20400))
+          END=$((SECONDS + 300))
+
+          echo
+          echo "Target username:"
+          echo "$MACOS_USERNAME"
+
+          echo
+          echo "Target UID:"
+          echo "$TARGET_UID"
+
+          echo
+          echo "No Switch User will be performed."
+          echo "Waiting to see whether a GUI session appears."
 
           while [ "$SECONDS" -lt "$END" ]; do
 
-            REMAINING=$((END - SECONDS))
+            CURRENT_USER=$(
+              stat -f "%Su" /dev/console
+            )
 
             echo
-            echo "=================================================="
-            echo "STATUS"
-            echo "=================================================="
+            echo "------------------------------------------"
+
+            echo "Time:"
+            date
+
+            echo "Console user:"
+            echo "$CURRENT_USER"
+
+            echo "GUI domain:"
+
+            sudo launchctl print \
+              "gui/$TARGET_UID" \
+              >/tmp/gui-domain.txt \
+              2>&1
+
+            GUI_EXIT=$?
+
+            echo "Exit:"
+            echo "$GUI_EXIT"
+
+            if [ "$GUI_EXIT" -eq 0 ]; then
+
+              echo
+              echo "=================================================="
+              echo "TARGET GUI DOMAIN APPEARED"
+              echo "=================================================="
+
+              cat /tmp/gui-domain.txt
+
+              exit 0
+
+            fi
 
             echo
-            echo "Remaining:"
-            echo "$REMAINING seconds"
+            echo "Target GUI domain does not exist yet."
 
-            echo
-            echo "Console:"
-            stat -f "%Su" /dev/console
-
-            echo
-            echo "GUI sessions:"
-            who || true
-
-            echo
-            echo "===== MACRDP ====="
-
-            pgrep -fl macrdp || true
-
-            echo
-            echo "===== PORT 3390 ====="
-
-            lsof \
-              -nP \
-              -iTCP:3390 \
-              -sTCP:LISTEN \
-              2>/dev/null || true
-
-            echo
-            echo "===== TAILSCALE ====="
-
-            sudo tailscale status \
-              2>/dev/null || true
-
-            echo
-            echo "===== MACRDP LOG ====="
-
-            tail -50 \
-              /tmp/macrdp/console.log \
-              2>/dev/null || true
-
-            sleep 30
+            sleep 10
 
           done
 
+          echo
+          echo "=================================================="
+          echo "TARGET GUI DOMAIN DID NOT APPEAR"
+          echo "=================================================="
+
+          echo
+          echo "Final console:"
+          stat -f "%Su" /dev/console
+
+          echo
+          echo "Final sessions:"
+          who || true
+
+          echo
+          echo "Final GUI domain:"
+
+          sudo launchctl print \
+            "gui/$TARGET_UID" \
+            2>&1 || true
+
+          echo
+          echo "Target processes:"
+
+          ps -axo user,pid,ppid,stat,command \
+            | awk -v user="$MACOS_USERNAME" \
+              '$1 == user {print}' \
+            || true
+
       # =========================================================
-      # 15. FINAL DIAGNOSTIC
+      # 10. FINAL DIAGNOSTIC
       # =========================================================
       - name: Final Diagnostic
         if: always()
         shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
           set +e
 
           echo "=================================================="
           echo "FINAL DIAGNOSTIC"
           echo "=================================================="
+
+          TARGET_UID=$(id -u "$MACOS_USERNAME" 2>/dev/null)
 
           echo
           echo "===== macOS ====="
@@ -646,6 +508,24 @@ jobs:
           who || true
 
           echo
+          echo "===== USERS ====="
+
+          users || true
+
+          echo
+          echo "===== TARGET UID ====="
+
+          echo "$TARGET_UID"
+
+          echo
+          echo "===== TARGET PROCESSES ====="
+
+          ps -axo user,pid,ppid,stat,command \
+            | awk -v user="$MACOS_USERNAME" \
+              '$1 == user {print}' \
+            || true
+
+          echo
           echo "===== WINDOWSERVER ====="
 
           pgrep -fl WindowServer || true
@@ -656,52 +536,38 @@ jobs:
           pgrep -fl loginwindow || true
 
           echo
-          echo "===== MACRDP ====="
+          echo "===== TARGET GUI DOMAIN ====="
 
-          pgrep -fl macrdp || true
+          if [ -n "$TARGET_UID" ]; then
+
+            sudo launchctl print \
+              "gui/$TARGET_UID" \
+              2>&1 || true
+
+          fi
 
           echo
-          echo "===== PORT 3390 ====="
+          echo "===== LOGINWINDOW PREFERENCES ====="
 
-          lsof \
-            -nP \
-            -iTCP:3390 \
-            -sTCP:LISTEN \
+          sudo defaults read \
+            /Library/Preferences/com.apple.loginwindow \
             2>&1 || true
 
           echo
-          echo "===== TAILSCALE IP ====="
+          echo "===== TARGET USER RECORD ====="
 
-          cat \
-            /tmp/tailscale_ip \
-            2>/dev/null || true
-
-          echo
-          echo "===== TAILSCALE STATUS ====="
-
-          sudo tailscale status \
+          dscl . \
+            -read "/Users/$MACOS_USERNAME" \
             2>&1 || true
-
-          echo
-          echo "===== MACRDP LOG ====="
-
-          cat \
-            /tmp/macrdp/console.log \
-            2>/dev/null || true
-
-          echo
-          echo "===== TAILSCALED LOG ====="
-
-          cat \
-            /tmp/tailscaled.log \
-            2>/dev/null || true
 
       # =========================================================
-      # 16. CLEANUP
+      # 11. CLEANUP
       # =========================================================
       - name: Cleanup
         if: always()
         shell: bash
+        env:
+          MACOS_USERNAME: ${{ secrets.MACOS_USERNAME }}
         run: |
           set +e
 
@@ -709,20 +575,12 @@ jobs:
           echo "CLEANUP"
           echo "=================================================="
 
-          if [ -f /tmp/macrdp.pid ]; then
+          echo
+          echo "Removing Auto Login setting..."
 
-            PID=$(cat /tmp/macrdp.pid)
-
-            echo "Stopping macrdp PID: $PID"
-
-            kill "$PID" \
-              2>/dev/null || true
-
-          fi
-
-          pkill -f macrdp || true
-
-          sudo tailscale down \
+          sudo defaults delete \
+            /Library/Preferences/com.apple.loginwindow \
+            autoLoginUser \
             2>/dev/null || true
 
           echo
