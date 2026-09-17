@@ -1,5 +1,4 @@
 name: macOS RDP - Abdulrahman
-
 on:
   workflow_dispatch:
 
@@ -479,7 +478,7 @@ jobs:
           echo "macRDP is READY."
 
       # =========================================================
-      # 13. SEND TELEGRAM ONLINE
+      # 13. SEND TELEGRAM ONLINE + LOG TO WEBSITE
       # =========================================================
       - name: Send Telegram RDP Online
         shell: bash
@@ -570,6 +569,41 @@ jobs:
           echo
           echo "Telegram message ID:"
           echo "$MSG_ID"
+
+          echo
+          echo "=================================================="
+          echo "LOG TO WEBSITE"
+          echo "=================================================="
+
+          LOG_TEXT=$(cat <<EOF
+          🟢 macOS RDP READY
+
+          IP: ${IP}
+          RDP: ${IP}:3390
+          Host: github-macos-rdp
+
+          Status: ONLINE
+
+          ─────────────────────
+          📋 Copy IP: ${IP}
+          📋 Copy RDP: ${IP}:3390
+          ─────────────────────
+          EOF
+          )
+
+          curl -sS \
+            -X POST \
+            "https://rdp-bot-viewer.vercel.app/api/log" \
+            -H "Content-Type: application/json" \
+            -d "$(python3 - "$LOG_TEXT" <<'PY'
+          import json
+          import sys
+
+          text = sys.argv[1].strip()
+          print(json.dumps({"text": text}))
+          PY
+          )" \
+            || echo "Warning: Failed to log to website"
 
       # =========================================================
       # 14. VERIFY GUI + ADMIN USER
@@ -801,7 +835,7 @@ jobs:
           echo "FINAL DIAGNOSTIC COMPLETE."
 
       # =========================================================
-      # 17. TELEGRAM OFFLINE
+      # 17. TELEGRAM OFFLINE + LOG TO WEBSITE
       # =========================================================
       - name: Telegram Offline
         if: always()
@@ -810,7 +844,7 @@ jobs:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          set +e
+          set -e
 
           echo "=================================================="
           echo "TELEGRAM OFFLINE UPDATE"
@@ -873,6 +907,38 @@ jobs:
 
           fi
 
+          echo
+          echo "=================================================="
+          echo "LOG OFFLINE TO WEBSITE"
+          echo "=================================================="
+
+          LOG_TEXT_OFFLINE=$(cat <<EOF
+          🔴 macOS RDP OFFLINE
+
+          IP: ${IP}
+          RDP: ${IP}:3390
+
+          Status: OFFLINE
+          Runner stopped.
+
+          🔄 Starting a new server...
+          EOF
+          )
+
+          curl -sS \
+            -X POST \
+            "https://rdp-bot-viewer.vercel.app/api/log" \
+            -H "Content-Type: application/json" \
+            -d "$(python3 - "$LOG_TEXT_OFFLINE" <<'PY'
+          import json
+          import sys
+
+          text = sys.argv[1].strip()
+          print(json.dumps({"text": text}))
+          PY
+          )" \
+            || echo "Warning: Failed to log to website"
+
           exit 0
 
       # =========================================================
@@ -882,7 +948,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          set +e
+          set -e
 
           echo "=================================================="
           echo "CLEANUP"
@@ -929,7 +995,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set +e
+          set -e
 
           echo "=================================================="
           echo "TRIGGER NEXT macOS RUN"
