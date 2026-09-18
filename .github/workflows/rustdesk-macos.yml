@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   macos:
-    runs-on: macos-15-large
+    runs-on: macos-latest-xlarge
     timeout-minutes: 350
 
     steps:
